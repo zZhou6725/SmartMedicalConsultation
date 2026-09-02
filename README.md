@@ -30,11 +30,7 @@ smart-medical-consultation/
 ## 快速开始（环境准备）
 
 1. `docker compose up -d` → 启动 Neo4j（7474/7687）、MySQL（3307）、Redis（6379）。
-2. 执行 `scripts/neo4j_seed.cql`（先灌种子）与 `scripts/neo4j_schema.cql`（后建约束）。
-3. 执行 `scripts/mysql_init.sql` 建三张业务表。
-4. 创建 Python 3.12 虚拟环境并 `pip install -r requirements.txt`。
-5. 复制 `.env` 填入 `LLM_API_KEY`。
-
-> 详细开发路线见 `docs/智慧问诊Agent系统-开发总手册（实习版）.md`，接口定义见 `docs/智慧问诊Agent系统-接口文档.md`。
+2. `创建 Python 3.12 虚拟环境并 `pip install -r requirements.txt`。
+3. `复制 `.env` 填入 `LLM_API_KEY`。
 
 *本系统仅供健康咨询与就医指导，不能替代专业医疗诊断。身体不适请及时就医，切勿自行用药。*
