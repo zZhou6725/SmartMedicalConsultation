@@ -1,0 +1,61 @@
+services:
+  # 医疗知识图谱数据库
+  neo4j:
+    image: neo4j:5.26
+    container_name: medical-neo4j
+    ports:
+      - "7474:7474"  # 可视化页面端口
+      - "7687:7687"  # 程序连接端口
+    environment:
+      NEO4J_AUTH: neo4j/123456  # 账号密码（开发固定）
+      NEO4J_dbms_security_auth__minimum__password__length: "6"  # Neo4j 5.x 默认要求密码≥8位，这里放行 6 位（123456）
+      NEO4J_PLUGINS: '["apoc"]'   # 开启 APOC 插件，支持图谱批量操作
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # 业务持久化数据库（官方镜像默认 utf8mb4，这里用启动参数显式指定）
+  mysql:
+    image: mysql:8.0
+    container_name: medical-mysql
+    ports:
+      - "3307:3306"  # 本机 3306 被本地 MySQL 服务占用，容器映射到 3307
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: medical_consult
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p123456"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  # 会话缓存中间件
+  redis:
+    image: redis:7-alpine
+    container_name: medical-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+volumes:
+  neo4j-data:
+  neo4j-logs:
+  mysql-data:
+  redis-data:
