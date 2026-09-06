@@ -20,6 +20,10 @@ node_modules/
 # 本地产物
 data/raw/
 
+# 接口测试产生的临时文件
+resp.json
+resp*.json
+
 # 内部文档与脚本（不随仓库公开）
 docs/
 scripts/
