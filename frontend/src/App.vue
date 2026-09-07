@@ -4,7 +4,7 @@ import { ElMessage } from 'element-plus'
 import { sendChatMessageStream } from '@/api/chatApi'
 import {
   ChatDotRound, Plus, OfficeBuilding, FirstAidKit, Reading,
-  Refresh, Promotion, WarningFilled, EditPen,
+  Refresh, Promotion, WarningFilled, EditPen,Clock, CopyDocument,
 } from '@element-plus/icons-vue'
 
 const messages = ref([])         // 消息列表
@@ -57,6 +57,16 @@ async function send() {
   }
 }
 
+// 复制 AI 回复文本
+async function copy(text) {
+  try {
+    await navigator.clipboard.writeText(text)   // 写入剪贴板
+    ElMessage.success('复制成功')
+  } catch (e) {
+    ElMessage.error('复制失败，请手动复制')
+  }
+}
+
 </script>
 
 <template>
@@ -104,8 +114,36 @@ async function send() {
           <!-- 6) v-for：根据 messages 动态渲染消息，:class 按角色区分左右 -->
           <div v-for="(msg, i) in messages" :key="i" class="msg" :class="msg.role">
             <template v-if="msg.role === 'assistant'">
-              <div class="avatar"><el-icon :size="18" color="#fff"><FirstAidKit/></el-icon></div>
-              <div class="bubble ai">{{ msg.content }}</div>
+              <div class="avatar">
+                <el-icon :size="18" color="#fff">
+                  <FirstAidKit/>
+                </el-icon>
+              </div>
+              <div class="ai-body">
+                <div class="card">
+                  <div class="card-title">智慧问诊AGENT系统</div>
+                  <div class="card-text">{{ msg.content }}</div>
+
+                  <!-- 症状标签（数据驱动） -->
+                  <div v-if="msg.symptoms && msg.symptoms.length" class="row">
+                    <span class="label">症状</span>
+                    <el-tag v-for="s in msg.symptoms" :key="s" size="small">{{ s }}</el-tag>
+                  </div>
+
+                  <!-- 推荐科室（数据驱动） -->
+                  <div v-if="msg.department" class="row">
+                    <span class="label">推荐科室</span>
+                    <el-tag size="small" class="dept">{{ msg.department }}</el-tag>
+                  </div>
+
+                  <div v-if="msg.disclaimer" class="disclaimer">{{ msg.disclaimer }}</div>
+                </div>
+
+                <div class="card-footer">
+                  <span class="ms"><el-icon><Clock/></el-icon>{{ msg.consumeTime }} ms</span>
+                  <span class="copy" @click="copy(msg.content)"><el-icon><CopyDocument/></el-icon> 复制</span>
+                </div>
+              </div>
             </template>
             <template v-else>
               <div class="bubble user">{{ msg.content }}</div>
@@ -181,4 +219,16 @@ async function send() {
 .input-bar .el-button { margin: 0; }
 .send { height: 40px; border-radius: 10px; box-sizing: border-box; }
 .send .el-icon { margin-right: 4px; }
+
+.ai-body { flex: 1; display: flex; flex-direction: column; }
+.card { width: 100%; background: #fff; border: 1px solid #ebeef5; border-left: 4px solid #1fc0a5; border-radius: 12px; padding: 16px 18px; box-sizing: border-box; }
+.card-title { font-size: 12px; color: #155e52; letter-spacing: .5px; margin-bottom: 10px; }
+.card-text { font-size: 14px; color: #303133; line-height: 1.7; margin-bottom: 12px; }
+.row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.row .label { font-size: 12px; color: #155e52; }
+.row .dept { background: #eef7f5; border-color: #2f9e8f; color: #2f9e8f; }
+.disclaimer { background: #fff3e0; color: #e0813d; border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 10px; }
+.card-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 12px; color: #909399; margin-top: 8px; }
+.card-footer .ms { display: flex; align-items: center; gap: 4px; }
+.card-footer .copy { color: #2f9e8f; cursor: pointer; display: flex; align-items: center; gap: 4px; }
 </style>

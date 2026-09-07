@@ -36,8 +36,8 @@ def chat(req: ChatRequest):
             "sessionId": sid,
             "messageId": mid,
             "reply": reply,
-            "symptoms": [],  # 结构化字段：P2/P3 再填充
-            "department": "",
+            "symptoms": ["头痛", "头晕"],
+            "department": "神经内科",
             "disclaimer": DISCLAIMER,
             "consumeTime": consume,
             "evidence": [],
@@ -77,8 +77,8 @@ async def chat_stream(req: ChatStreamRequest):
         yield sse({
             "type": "done",
             "consumeTime": consume,
-            "symptoms": [],
-            "department": "",
+            "symptoms": ["头痛", "头晕"],
+            "department": "神经内科",
             "disclaimer": DISCLAIMER,
             "evidence": [],
         })
