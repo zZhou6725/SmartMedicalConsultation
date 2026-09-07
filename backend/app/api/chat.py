@@ -5,6 +5,7 @@ import json
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
+from app.services.llm import chat_once, chat_stream
 # Pydantic，用来定义请求体、自动做参数校验（比如 message 不能为空）
 
 
@@ -24,10 +25,10 @@ def chat(req: ChatRequest):
     start = time.time()
     sid = req.sessionId or str(uuid.uuid4())   #没传 sessionId 就生成一个
     mid = f"msg-{int(time.time() * 1000)}"
-    reply = (
-        f"（模拟回复）已收到您的问题：{req.message}。"
-        "这是后端返回的固定模拟回复，后续会替换为真实智能问诊答案。"
-    )
+    try:
+        reply = chat_once(req.message)
+    except Exception as e:
+        reply = f"（调用大模型失败，请检查 LLM_API_KEY 或网络）"
     consume = int((time.time() - start) * 1000)  # 简单计时（毫秒）
     return {
         "code": 1,
@@ -58,7 +59,7 @@ def sse(data: dict) -> str:
 
 
 @router.post("/api/chat/stream")
-async def chat_stream(req: ChatStreamRequest):
+async def chat_stream_handler(req: ChatStreamRequest):
     sid = req.sessionId or str(uuid.uuid4())
     mid = f"msg-{int(time.time() * 1000)}"
     full = (
@@ -69,10 +70,11 @@ async def chat_stream(req: ChatStreamRequest):
     def generator():
         start = time.time()
         yield sse({"type": "meta", "sessionId": sid, "messageId": mid})
-        # 把整句切成小块，模拟 LLM 逐字输出
-        for ch in (full[i:i + 3] for i in range(0, len(full), 3)):
-            yield sse({"type": "delta", "content": ch})
-            time.sleep(0.03)                # 模拟生成间隔
+        try:
+            for piece in chat_stream(req.message):  # 逐块来自大模型
+                yield sse({"type": "delta", "content": piece})
+        except Exception as e:
+            yield sse({"type": "error", "code": 0, "msg": f"调用大模型失败：{e}"})
         consume = int((time.time() - start) * 1000)
         yield sse({
             "type": "done",

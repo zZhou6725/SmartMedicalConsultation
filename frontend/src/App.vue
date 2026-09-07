@@ -122,21 +122,22 @@ async function copy(text) {
               <div class="ai-body">
                 <div class="card">
                   <div class="card-title">智慧问诊AGENT系统</div>
+                  <div class="advice-title">💡 就医建议：</div>
                   <div class="card-text">{{ msg.content }}</div>
 
-                  <!-- 症状标签（数据驱动） -->
                   <div v-if="msg.symptoms && msg.symptoms.length" class="row">
                     <span class="label">症状</span>
                     <el-tag v-for="s in msg.symptoms" :key="s" size="small">{{ s }}</el-tag>
                   </div>
 
-                  <!-- 推荐科室（数据驱动） -->
                   <div v-if="msg.department" class="row">
                     <span class="label">推荐科室</span>
                     <el-tag size="small" class="dept">{{ msg.department }}</el-tag>
                   </div>
 
-                  <div v-if="msg.disclaimer" class="disclaimer">{{ msg.disclaimer }}</div>
+                  <div v-if="msg.disclaimer" class="disclaimer">
+                    <span class="ball">🔴</span>{{ msg.disclaimer }}
+                  </div>
                 </div>
 
                 <div class="card-footer">
