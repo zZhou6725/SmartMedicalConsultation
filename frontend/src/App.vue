@@ -1,36 +1,44 @@
 <script setup>
-
-// 1) ref 是 Vue 的响应式引用：值变了，页面会自动更新。用它存"消息列表"和"输入内容"
 import { ref } from 'vue'
-
-// Element Plus 图标（沿用）
+import { ElMessage } from 'element-plus'                 // 全局消息提示
+import { sendChatMessage } from '@/api/chatApi'          // 复用 request 封装
 import {
   ChatDotRound, Plus, OfficeBuilding, FirstAidKit, Reading,
   Refresh, Promotion, WarningFilled, EditPen,
 } from '@element-plus/icons-vue'
 
-// 2) 消息列表：前端只认这个数组，模板用 v-for 渲染它
-//    这样以后把 AI 回复从 mock 换成接口数据，只改 getReply()，一劳永逸
-const messages = ref([
-  { role: 'assistant', content: '你好，我是智慧问诊 Agent，请描述你的症状或问题。' },
-])
+const messages = ref([])         // 消息列表
+const inputText = ref('')        // 输入内容
+const sessionId = ref(null)      // 会话id，首次为空，后端返回后保存
 
-// 3) 输入框内容（v-model 双向绑定）
-const inputText = ref('')
-
-// 4) 发送消息
-function send() {
+// 发送消息
+async function send() {
   const text = inputText.value.trim()
   if (!text) return                 // 空内容不发
   messages.value.push({ role: 'user', content: text })   // 用户消息立即上屏（右对齐）
   inputText.value = ''              // 清空输入框
-  const reply = getReply(text)      // 获取 AI 回复
+  const reply = await getReply(text)      // 获取 AI 回复
   messages.value.push({ role: 'assistant', content: reply })  // 追加 AI 消息（左对齐）
 }
 
-// 5) 本地 mock 回复：P1-3 时把这函数内部换成"调后端 /api/chat"
-function getReply(text) {
-  return '这是一条模拟回复：「' + text + '」。前端收发与渲染已打通。'
+// 回复消息
+async function getReply(text) {
+  try {
+    const reqBody = { message: text }
+    if (sessionId.value) reqBody.sessionId = sessionId.value   // 有会话id就带上
+    const res = await sendChatMessage(reqBody)   // res 已是 {code,msg,data}
+    if (res.code === 1) {
+      sessionId.value = res.data.sessionId        // 保存会话id
+      return res.data.reply
+    } else {
+      ElMessage.error(res.msg || '请求失败')
+      return ''
+    }
+  } catch (err) {
+    console.error('请求异常:', err)
+    ElMessage.error('网络异常，请检查后端服务')
+    return ''
+  }
 }
 
 </script>
