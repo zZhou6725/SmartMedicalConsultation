@@ -1,8 +1,10 @@
 import time
 import uuid  #随机数
+import json
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
+from fastapi.responses import StreamingResponse
 # Pydantic，用来定义请求体、自动做参数校验（比如 message 不能为空）
 
 
@@ -41,3 +43,44 @@ def chat(req: ChatRequest):
             "evidence": [],
         },
     }
+
+
+class ChatStreamRequest(BaseModel):
+    """SSE 流式请求体：message 必填，stream 固定 true。"""
+    sessionId: str | None = None
+    message: str = Field(..., min_length=1)
+    stream: bool = True
+
+
+def sse(data: dict) -> str:
+    """把 dict 转成 SSE 事件行：data: {json}\n\n"""
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@router.post("/api/chat/stream")
+async def chat_stream(req: ChatStreamRequest):
+    sid = req.sessionId or str(uuid.uuid4())
+    mid = f"msg-{int(time.time() * 1000)}"
+    full = (
+        f"（流式模拟回复）已收到您的问题：{req.message}。"
+        "这是后端分块推送的流式回复。"
+    )
+
+    def generator():
+        start = time.time()
+        yield sse({"type": "meta", "sessionId": sid, "messageId": mid})
+        # 把整句切成小块，模拟 LLM 逐字输出
+        for ch in (full[i:i + 3] for i in range(0, len(full), 3)):
+            yield sse({"type": "delta", "content": ch})
+            time.sleep(0.03)                # 模拟生成间隔
+        consume = int((time.time() - start) * 1000)
+        yield sse({
+            "type": "done",
+            "consumeTime": consume,
+            "symptoms": [],
+            "department": "",
+            "disclaimer": DISCLAIMER,
+            "evidence": [],
+        })
+
+    return StreamingResponse(generator(), media_type="text/event-stream")
