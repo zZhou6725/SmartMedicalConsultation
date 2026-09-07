@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
-import { ElMessage } from 'element-plus'                 // 全局消息提示
-import { sendChatMessage } from '@/api/chatApi'          // 复用 request 封装
+import { ElMessage } from 'element-plus'
+import { sendChatMessageStream } from '@/api/chatApi'
 import {
   ChatDotRound, Plus, OfficeBuilding, FirstAidKit, Reading,
   Refresh, Promotion, WarningFilled, EditPen,
@@ -9,35 +9,51 @@ import {
 
 const messages = ref([])         // 消息列表
 const inputText = ref('')        // 输入内容
-const sessionId = ref(null)      // 会话id，首次为空，后端返回后保存
+const sessionId = ref(null)      // 会话id，首次为空，后端 meta 事件返回后保存
 
-// 发送消息
+// 发送消息：改用 SSE 流式，AI 回复逐字上屏（打字效果）
 async function send() {
   const text = inputText.value.trim()
-  if (!text) return                 // 空内容不发
-  messages.value.push({ role: 'user', content: text })   // 用户消息立即上屏（右对齐）
-  inputText.value = ''              // 清空输入框
-  const reply = await getReply(text)      // 获取 AI 回复
-  messages.value.push({ role: 'assistant', content: reply })  // 追加 AI 消息（左对齐）
-}
+  if (!text) return
+  messages.value.push({ role: 'user', content: text })    // 用户消息立即上屏
+  inputText.value = ''
+  messages.value.push({ role: 'assistant', content: '' }) // 先放一条空助手消息
+  const aiMsg = messages.value[messages.value.length - 1]
 
-// 回复消息
-async function getReply(text) {
+  const reqBody = { message: text }
+  if (sessionId.value) reqBody.sessionId = sessionId.value   // ← 有会话id就带上
+
   try {
-    const reqBody = { message: text }
-    if (sessionId.value) reqBody.sessionId = sessionId.value   // 有会话id就带上
-    const res = await sendChatMessage(reqBody)   // res 已是 {code,msg,data}
-    if (res.code === 1) {
-      sessionId.value = res.data.sessionId        // 保存会话id
-      return res.data.reply
-    } else {
-      ElMessage.error(res.msg || '请求失败')
-      return ''
+    const res =  await sendChatMessageStream(reqBody)
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const events = buffer.split('\n\n')
+      buffer = events.pop()
+      for (const evt of events) {
+        const line = evt.split('\n').find(l => l.startsWith('data: '))
+        if (!line) continue
+        const data = JSON.parse(line.slice(6))
+        if (data.type === 'meta') {
+          sessionId.value = data.sessionId    // 从 meta 里拿并保存
+        } else if (data.type === 'delta') {
+          aiMsg.content += data.content
+        } else if (data.type === 'done') {
+          aiMsg.symptoms = data.symptoms
+          aiMsg.department = data.department
+          aiMsg.disclaimer = data.disclaimer
+          aiMsg.consumeTime = data.consumeTime
+        }
+      }
     }
   } catch (err) {
-    console.error('请求异常:', err)
+    console.error('流式请求异常:', err)
     ElMessage.error('网络异常，请检查后端服务')
-    return ''
+    aiMsg.content = '（请求失败，请稍后重试）'
   }
 }
 
