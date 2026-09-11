@@ -15,27 +15,27 @@ SYSTEM_PROMPT = (
 )
 
 
-def build_messages(user_text: str) -> list:
-    return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_text},
-    ]
+def build_messages(history: list, user_text: str) -> list:
+    msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+    msgs.extend(history)
+    msgs.append({"role": "user", "content": user_text})
+    return msgs
 
 
-def chat_once(user_text: str) -> str:
+def chat_once(history: list, user_text: str) -> str:
     """非流式：一次返回完整回复。"""
     resp = client.chat.completions.create(
         model=settings.LLM_MODEL,
-        messages=build_messages(user_text),
+        messages=build_messages(history, user_text),
     )
     return resp.choices[0].message.content or ""
 
 
-def chat_stream(user_text: str):
+def chat_stream(history: list, user_text: str):
     """流式生成器：逐块 yield 文本，用于 SSE。"""
     stream = client.chat.completions.create(
         model=settings.LLM_MODEL,
-        messages=build_messages(user_text),
+        messages=build_messages(history, user_text),
         stream=True,
     )
     for chunk in stream:
