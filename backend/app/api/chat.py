@@ -34,10 +34,11 @@ def chat(req: ChatRequest):
         reply = f"（调用大模型失败，请检查 LLM_API_KEY 或网络）"
 
     # 追加并缓存（TTL 24h / 最近12轮）
+    consume = int((time.time() - start) * 1000)
     history.append({"role": "user", "content": req.message})
-    history.append({"role": "assistant", "content": reply})
+    history.append({"role": "assistant", "content": reply, "consumeTime": consume})  # ← 带上耗时
     save_session(sid, history)
-    consume = int((time.time() - start) * 1000)  # 简单计时（毫秒）
+
     return {
         "code": 1,
         "msg": "success",
@@ -82,10 +83,10 @@ async def chat_stream_handler(req: ChatStreamRequest):
                 yield sse({"type": "delta", "content": piece})
         except Exception as e:
             yield sse({"type": "error", "code": 0, "msg": f"调用大模型失败：{e}"})
-        history.append({"role": "user", "content": req.message})
-        history.append({"role": "assistant", "content": "".join(acc)})
-        save_session(sid, history)  # ← 补：写入 Redis
         consume = int((time.time() - start) * 1000)
+        history.append({"role": "user", "content": req.message})
+        history.append({"role": "assistant", "content": "".join(acc), "consumeTime": consume})
+        save_session(sid, history)
         yield sse({
             "type": "done",
             "consumeTime": consume,
@@ -99,6 +100,5 @@ async def chat_stream_handler(req: ChatStreamRequest):
 
 @router.get("/api/chat/messages")
 def get_messages(sessionId: str):
-    msgs = load_session(sessionId)
-    rows = [{"role": m["role"], "content": m["content"]} for m in msgs]
-    return {"code": 1, "msg": "success", "data": {"total": len(rows), "rows": rows}}
+    msgs = load_session(sessionId)                     
+    return {"code": 1, "msg": "success", "data": {"total": len(msgs), "rows": msgs}}
