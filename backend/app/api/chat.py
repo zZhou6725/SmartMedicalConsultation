@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 from app.services.llm import chat_once, chat_stream as llm_stream
 from app.store.session_store import load_session, save_session
+from app.services.safety import safety_fields
 # Pydantic，用来定义请求体、自动做参数校验（比如 message 不能为空）
 
 
@@ -39,6 +40,8 @@ def chat(req: ChatRequest):
     history.append({"role": "assistant", "content": reply, "consumeTime": consume})  # ← 带上耗时
     save_session(sid, history)
 
+    sf = safety_fields(req.message)
+
     return {
         "code": 1,
         "msg": "success",
@@ -49,6 +52,7 @@ def chat(req: ChatRequest):
             "symptoms": ["头痛", "头晕"],
             "department": "神经内科",
             "disclaimer": DISCLAIMER,
+            "medReminder": sf["medReminder"],
             "consumeTime": consume,
             "evidence": [],
         },
@@ -87,12 +91,14 @@ async def chat_stream_handler(req: ChatStreamRequest):
         history.append({"role": "user", "content": req.message})
         history.append({"role": "assistant", "content": "".join(acc), "consumeTime": consume})
         save_session(sid, history)
+        sf = safety_fields(req.message)
         yield sse({
             "type": "done",
             "consumeTime": consume,
             "symptoms": ["头痛", "头晕"],
             "department": "神经内科",
             "disclaimer": DISCLAIMER,
+            "medReminder": sf["medReminder"],
             "evidence": [],
         })
 
@@ -100,5 +106,5 @@ async def chat_stream_handler(req: ChatStreamRequest):
 
 @router.get("/api/chat/messages")
 def get_messages(sessionId: str):
-    msgs = load_session(sessionId)                     
+    msgs = load_session(sessionId)
     return {"code": 1, "msg": "success", "data": {"total": len(msgs), "rows": msgs}}

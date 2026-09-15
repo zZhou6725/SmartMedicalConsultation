@@ -94,6 +94,7 @@ async function send() {
           aiMsg.symptoms = data.symptoms
           aiMsg.department = data.department
           aiMsg.disclaimer = data.disclaimer
+          aiMsg.medReminder = data.medReminder
           aiMsg.consumeTime = data.consumeTime
         }
       }
@@ -189,8 +190,10 @@ async function copy(text) {
                   </div>
 
                   <div v-if="msg.disclaimer" class="disclaimer">
-                    <span class="ball">🔴</span>{{ msg.disclaimer }}
+                    <span class="ball">🔴</span><el-icon class="warn-icon"><WarningFilled/></el-icon>
+                    {{ msg.disclaimer }}
                   </div>
+                  <div v-if="msg.medReminder" class="med-reminder">{{ msg.medReminder }}</div>
                 </div>
 
                 <div class="card-footer">
@@ -285,4 +288,10 @@ async function copy(text) {
 .card-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 12px; color: #909399; margin-top: 8px; }
 .card-footer .ms { display: flex; align-items: center; gap: 4px; }
 .card-footer .copy { color: #2f9e8f; cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.med-reminder { background: #eef7f5; color: #155e52; border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 10px; }
+.disclaimer { background: #fff3e0; color: #e0813d; border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+/* 红球 emoji：去掉自带行高，flex 居中 */
+.disclaimer .ball { font-size: 12px; line-height: 1; display: inline-flex; align-items: center; flex-shrink: 0; }
+/* Element Plus 图标：同样 flex 居中，大小对齐 */
+.disclaimer .warn-icon { color: #e54d42; font-size: 15px; line-height: 1; display: inline-flex; align-items: center; flex-shrink: 0; }
 </style>
