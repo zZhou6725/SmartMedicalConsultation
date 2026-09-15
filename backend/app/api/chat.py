@@ -96,3 +96,9 @@ async def chat_stream_handler(req: ChatStreamRequest):
         })
 
     return StreamingResponse(generator(), media_type="text/event-stream")
+
+@router.get("/api/chat/messages")
+def get_messages(sessionId: str):
+    msgs = load_session(sessionId)
+    rows = [{"role": m["role"], "content": m["content"]} for m in msgs]
+    return {"code": 1, "msg": "success", "data": {"total": len(rows), "rows": rows}}
