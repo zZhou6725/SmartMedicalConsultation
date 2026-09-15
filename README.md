@@ -16,21 +16,48 @@
 |---|---|
 | 数据层 | Neo4j 5.26（8 类节点 / 12 类关系）、FAISS（IndexIVFFlat）、BGE-M3 |
 | 智能体层 | LangChain 0.1.x + LangGraph 0.0.x |
+| 大模型 | OpenAI 兼容接口（默认 DeepSeek；`.env` 一行切换本地 vLLM） |
+| 会话存储 | Redis 热缓存（最近 12 轮 / TTL 24h）；MySQL 全量持久化（P4） |
 | API 层 | FastAPI + SSE 流式输出 |
-| 前端层 | Vue3 + Element Plus |
+| 前端层 | Vue3 + Vite + Element Plus（axios 统一请求封装 + Vite 代理） |
 | 基础设施 | docker-compose（Neo4j / Redis / MySQL） |
+
+## 已实现功能（截至 P2）
+
+- **核心对话**：SSE 流式逐字输出、多轮上下文、回车发送、自动滚动到底
+- **真实 LLM**：接入大模型（DeepSeek），回答简洁要点化、**不使用 emoji**
+- **会话历史**：Redis 热缓存（最近 12 轮 / TTL 24h）、左栏列表、点击切换复原、删除会话
+- **医疗安全层**：确定性规则引擎 —— 所有回答强制附带免责声明；用药类问题追加用药提醒
+- **医疗 UI**：免责警示条、响应耗时、一键复制、症状标签 / 推荐科室（结构就绪，数据待 P3）
 
 ## 目录结构
 
 ```
 smart-medical-consultation/
-├── backend/                 # FastAPI 后端（app/api、agent、retrieval、store）
-│   └── main.py              # 入口：CORS + 路由挂载
-├── frontend/                # Vue3 + Vite + Element Plus 前端
-├── docker-compose.yml       # 一键拉起 Neo4j(7474/7687) / MySQL(3307) / Redis(6379)
-├── requirements.txt         # 后端锁定依赖
-└── .env                     # 连接配置（不入库，需自行复制填写）
+├── backend/
+│   ├── app/
+│   │   ├── api/            # 接口层：system(/health)、chat、sessions
+│   │   ├── services/       # 业务服务：llm（大模型调用）、safety（安全规则）
+│   │   ├── store/          # 数据访问：session_store（Redis 会话缓存）
+│   │   ├── agent/          # LangGraph 多 Agent 编排（P3）
+│   │   └── retrieval/      # 向量 / 图谱 / GraphRAG 检索（P3）
+│   └── main.py             # 入口：CORS + 路由挂载
+├── frontend/               # Vue3 + Vite + Element Plus
+│   └── src/{api,utils}/    # 接口集中管理 + axios 统一请求封装
+├── docker-compose.yml      # Neo4j(7474/7687) / MySQL(3307) / Redis(6379)
+└── requirements.txt        # 后端锁定依赖
 ```
+
+## 接口（已实现）
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /health` | 健康检查 |
+| `POST /api/chat` | 发送对话（非流式） |
+| `POST /api/chat/stream` | 发送对话（SSE 流式） |
+| `GET /api/chat/messages` | 会话消息列表 |
+| `GET /api/sessions` | 会话列表 |
+| `DELETE /api/sessions/{sessionId}` | 删除会话 |
 
 ## 快速开始
 
@@ -49,7 +76,7 @@ cd backend
 python main.py               # 服务运行在 http://127.0.0.1:8000
 ```
 
-> 健康检查：`GET http://127.0.0.1:8000/health` 返回 `{"code":1,...,"data":{"status":"ok",...}}`
+> 健康检查：`GET http://127.0.0.1:8000/health`
 
 ### 3. 启动前端
 ```bash
@@ -61,10 +88,9 @@ npm run dev                  # 运行在 http://localhost:5173
 ## 里程碑
 
 - [x] P0 项目骨架搭建（前端 Vue3 + 后端 FastAPI + /health）
-- [x] P1 核心对话交互（消息收发 + SSE 流式）              ← 已完成（P1-1~P1-5）
-- [ ] P2 业务功能完善（真实 LLM、会话缓存、安全规则）      ← 进行中（P2-1/P2-2 已完成，P2-3~P2-5 待做）
-- [ ] P3 核心技术壁垒（GraphRAG + 多 Agent）
-- [ ] P4 工程化收尾（持久化、评估门禁、微调、部署）
-
+- [x] P1 核心对话交互（消息收发 + SSE 流式）              ← P1-1 ~ P1-5
+- [x] P2 业务功能完善（真实 LLM、会话缓存、安全规则）      ← P2-1 ~ P2-5 + 会话删除
+- [ ] P3 核心技术壁垒（GraphRAG 混合检索 + 多 Agent 编排）
+- [ ] P4 工程化收尾（MySQL 持久化、评估门禁、微调、一键部署）
 
 *本系统仅供健康咨询与就医指导，不能替代专业医疗诊断。身体不适请及时就医，切勿自行用药。*
