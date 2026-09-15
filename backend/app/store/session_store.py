@@ -60,4 +60,7 @@ def list_sessions() -> list:
     return rows
 
 def delete_session(session_id: str):
-    r.delete(_key(session_id))
+    r.delete(_key(session_id))  # 删消息
+    r.delete(_meta_key(session_id))  # 删元信息（标题/时间）
+    r.zrem(SESSIONS_SET, session_id)  # 从会话列表移除
+

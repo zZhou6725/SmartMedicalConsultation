@@ -28,3 +28,8 @@ export function getSessions(params) {
 export function getMessages(sessionId) {
   return request({ url: '/chat/messages', method: 'GET', params: { sessionId } })
 }
+
+// 删除会话（DELETE /api/sessions/{sessionId}）
+export function deleteSession(sessionId) {
+  return request({ url: `/sessions/${sessionId}`, method: 'DELETE' })
+}

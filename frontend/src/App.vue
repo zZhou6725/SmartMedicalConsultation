@@ -1,10 +1,10 @@
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
-import { sendChatMessageStream, getSessions, getMessages } from '@/api/chatApi'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { sendChatMessageStream, getSessions, getMessages, deleteSession } from '@/api/chatApi'
 import {
   ChatDotRound, Plus, OfficeBuilding, FirstAidKit, Reading,
-  Refresh, Promotion, WarningFilled, EditPen,Clock, CopyDocument,
+  Refresh, Promotion, WarningFilled, EditPen,Clock, CopyDocument, Delete,
 } from '@element-plus/icons-vue'
 
 const messages = ref([])         // 消息列表
@@ -117,6 +117,32 @@ async function copy(text) {
     ElMessage.error('复制失败，请手动复制')
   }
 }
+// 删除会话
+async function deleteChat(sid) {
+  try {
+    await ElMessageBox.confirm(
+  '删除后，聊天记录将不可恢复。',      // 内容
+  '确定删除对话？',                    // 标题
+  {
+    type: 'warning',
+    confirmButtonText: '删除',
+    cancelButtonText: '取消',
+    confirmButtonClass: 'el-button--danger',   // 让"删除"按钮是红色
+  }
+    )
+  } catch {
+    return                                   // 用户取消
+  }
+  try {
+    await deleteSession(sid)
+    ElMessage.success('已删除')
+    if (sid === sessionId.value) newChat()   // 删的是当前会话 → 清空聊天区
+    loadSessions()                           // 刷新列表
+  } catch (e) {
+    console.error('删除失败', e)
+    ElMessage.error('删除失败')
+  }
+}
 
 </script>
 
@@ -136,8 +162,13 @@ async function copy(text) {
 
         <div class="side-title">对话历史</div>
         <div v-for="s in sessions" :key="s.sessionId" class="history-item" :class="{ sel: s.sessionId === sessionId }" @click="switchSession(s.sessionId)">
-          <el-icon :size="14"><ChatDotRound/></el-icon>
-          <span>{{ s.title }}</span>
+          <el-icon :size="14">
+            <ChatDotRound/>
+          </el-icon>
+          <span class="item-title">{{ s.title }}</span>
+          <el-icon class="del" :size="14" @click.stop="deleteChat(s.sessionId)">
+            <Delete/>
+          </el-icon>
         </div>
 
 
@@ -294,4 +325,19 @@ async function copy(text) {
 .disclaimer .ball { font-size: 12px; line-height: 1; display: inline-flex; align-items: center; flex-shrink: 0; }
 /* Element Plus 图标：同样 flex 居中，大小对齐 */
 .disclaimer .warn-icon { color: #e54d42; font-size: 15px; line-height: 1; display: inline-flex; align-items: center; flex-shrink: 0; }
+.history-item .item-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-item .del { opacity: 0; transition: opacity .15s; flex-shrink: 0; }
+.history-item:hover .del { opacity: 1; color: #f56c6c; }
+</style>
+
+<style>
+:root {
+  --el-color-primary: #2f9e8f;
+  --el-color-primary-light-3: #5cbaac;
+  --el-color-primary-light-5: #8fd0c7;
+  --el-color-primary-light-7: #c2e5df;
+  --el-color-primary-light-8: #d9f0ec;
+  --el-color-primary-light-9: #eef7f5;
+  --el-color-primary-dark-2: #26847a;
+}
 </style>
