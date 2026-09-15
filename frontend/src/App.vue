@@ -1,15 +1,61 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
+import { sendChatMessageStream, getSessions, getMessages } from '@/api/chatApi'
 import { ElMessage } from 'element-plus'
-import { sendChatMessageStream } from '@/api/chatApi'
 import {
   ChatDotRound, Plus, OfficeBuilding, FirstAidKit, Reading,
   Refresh, Promotion, WarningFilled, EditPen,Clock, CopyDocument,
 } from '@element-plus/icons-vue'
 
 const messages = ref([])         // 消息列表
+const chatRef = ref(null)        // 聊天区容器引用
+
+
 const inputText = ref('')        // 输入内容
 const sessionId = ref(null)      // 会话id，首次为空，后端 meta 事件返回后保存
+
+const sessions = ref([])         // 会话列表
+
+// 滚动到聊天区底部
+function scrollToBottom() {
+  nextTick(() => {
+    requestAnimationFrame(() => {          // 等下一帧，确保布局/高度已更新
+      const el = chatRef.value?.$el || chatRef.value
+      if (el) el.scrollTop = el.scrollHeight
+    })
+  })
+}
+// 拉取会话列表（左栏历史）
+async function loadSessions() {
+  try {
+    const res = await getSessions({ page: 1, pageSize: 20 })
+    if (res.code === 1) sessions.value = res.data.rows
+  } catch (e) {
+    console.error('拉会话列表失败', e)
+  }
+}
+
+// 切换会话：拉取该会话消息并复原
+async function switchSession(sid) {
+  sessionId.value = sid
+  try {
+    const res = await getMessages(sid)
+    if (res.code === 1) {
+      messages.value = res.data.rows
+      scrollToBottom()                                   // ← 加：切换会话后滚到底
+    }
+  } catch (e) {
+    console.error('拉会话消息失败', e)
+  }
+}
+
+// 开启新对话：清空聊天区、重置会话
+function newChat() {
+  messages.value = []
+  sessionId.value = null
+}
+
+onMounted(loadSessions)          // 页面加载时拉一次会话列表
 
 // 发送消息：改用 SSE 流式，AI 回复逐字上屏（打字效果）
 async function send() {
@@ -19,6 +65,7 @@ async function send() {
   inputText.value = ''
   messages.value.push({ role: 'assistant', content: '' }) // 先放一条空助手消息
   const aiMsg = messages.value[messages.value.length - 1]
+  scrollToBottom()
 
   const reqBody = { message: text }
   if (sessionId.value) reqBody.sessionId = sessionId.value   // ← 有会话id就带上
@@ -42,6 +89,7 @@ async function send() {
           sessionId.value = data.sessionId    // 从 meta 里拿并保存
         } else if (data.type === 'delta') {
           aiMsg.content += data.content
+          scrollToBottom()
         } else if (data.type === 'done') {
           aiMsg.symptoms = data.symptoms
           aiMsg.department = data.department
@@ -50,6 +98,8 @@ async function send() {
         }
       }
     }
+    loadSessions()      // 流式结束后刷新会话列表
+    scrollToBottom()      // ← 流式完成后再滚一次，保证停在最底部
   } catch (err) {
     console.error('流式请求异常:', err)
     ElMessage.error('网络异常，请检查后端服务')
@@ -81,12 +131,14 @@ async function copy(text) {
             <div class="brand-sub">智能医疗 · 知识图谱驱动</div>
           </div>
         </div>
-        <el-button type="primary" class="new-chat gbtn"><el-icon :size="16"><Plus/></el-icon><span>开启新对话</span></el-button>
+        <el-button type="primary" class="new-chat gbtn" @click="newChat"><el-icon :size="16"><Plus/></el-icon><span>开启新对话</span></el-button>
 
         <div class="side-title">对话历史</div>
-        <div class="history-item sel"><el-icon :size="14"><ChatDotRound/></el-icon><span>我最近头痛、头晕，应该挂什么科？</span></div>
-        <div class="history-item"><el-icon :size="14"><ChatDotRound/></el-icon><span>我腰疼，手麻，怎么办</span></div>
-        <div class="history-item"><el-icon :size="14"><ChatDotRound/></el-icon><span>什么是糖尿病？</span></div>
+        <div v-for="s in sessions" :key="s.sessionId" class="history-item" :class="{ sel: s.sessionId === sessionId }" @click="switchSession(s.sessionId)">
+          <el-icon :size="14"><ChatDotRound/></el-icon>
+          <span>{{ s.title }}</span>
+        </div>
+
 
         <div class="side-title">我能帮你</div>
         <div class="feature"><div class="feature-ico"><el-icon :size="16"><OfficeBuilding/></el-icon></div><div><div class="feature-name">看病挂号</div><div class="feature-desc">症状/疾病 推荐就诊科室</div></div></div>
@@ -110,7 +162,8 @@ async function copy(text) {
           <span>本系统仅供健康咨询与就医指导，不能替代专业医疗诊断。身体不适请及时就医，切勿自行用药。</span>
         </el-header>
 
-        <el-main class="chat">
+
+        <el-main class="chat" ref="chatRef">
           <!-- 6) v-for：根据 messages 动态渲染消息，:class 按角色区分左右 -->
           <div v-for="(msg, i) in messages" :key="i" class="msg" :class="msg.role">
             <template v-if="msg.role === 'assistant'">
@@ -141,7 +194,7 @@ async function copy(text) {
                 </div>
 
                 <div class="card-footer">
-                  <span class="ms"><el-icon><Clock/></el-icon>{{ msg.consumeTime }} ms</span>
+                  <span v-if="msg.consumeTime" class="ms"><el-icon><Clock/></el-icon>{{ msg.consumeTime }} ms</span>
                   <span class="copy" @click="copy(msg.content)"><el-icon><CopyDocument/></el-icon> 复制</span>
                 </div>
               </div>

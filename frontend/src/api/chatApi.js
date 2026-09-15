@@ -18,3 +18,13 @@ export function sendChatMessageStream(params) {
     body: JSON.stringify(params),
   })
 }
+
+// 会话列表（GET /api/sessions）
+export function getSessions(params) {
+  return request({ url: '/sessions', method: 'GET', params })
+}
+
+// 会话消息（GET /api/chat/messages）
+export function getMessages(sessionId) {
+  return request({ url: '/chat/messages', method: 'GET', params: { sessionId } })
+}
