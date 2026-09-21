@@ -20,6 +20,10 @@ node_modules/
 # 本地产物
 data/raw/
 
+# 向量索引产物（可重建：python knowledge/index/build_vector_index.py）
+knowledge/index/*.index
+knowledge/index/*.json
+
 # 接口测试产生的临时文件
 resp.json
 resp*.json
