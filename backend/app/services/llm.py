@@ -1,4 +1,4 @@
-"""大模型调用：统一封装非流式 + 流式。"""
+"""大模型调用：统一封装非流式 + 流式，并支持注入检索上下文（RAG）。"""
 from openai import OpenAI
 
 from app.config import settings
@@ -15,28 +15,37 @@ SYSTEM_PROMPT = (
     "不要在回答中重复输出免责声明或安全提示（系统会统一附加）。"
 )
 
+# 有检索上下文时追加的约束：把「凭参数记忆作答」压成「依据证据作答」
+GROUNDED_RULE = (
+    "要求：回答必须以上述参考资料为依据，不要引入资料之外的具体事实"
+    "（病名、药物、剂量、科室等）；"
+    "资料未覆盖时直接说明知识库暂无相关内容，并建议就医确认。"
+)
 
-def build_messages(history: list, user_text: str) -> list:
-    msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+def build_messages(history: list, user_text: str, context: str = "") -> list:
+    """拼装消息列表。context 非空即为 RAG 模式：证据随 system 一起下发。"""
+    system = f"{SYSTEM_PROMPT}\n\n{context}\n\n{GROUNDED_RULE}" if context else SYSTEM_PROMPT
+    msgs = [{"role": "system", "content": system}]
     msgs.extend(history)
     msgs.append({"role": "user", "content": user_text})
     return msgs
 
 
-def chat_once(history: list, user_text: str) -> str:
+def chat_once(history: list, user_text: str, context: str = "") -> str:
     """非流式：一次返回完整回复。"""
     resp = client.chat.completions.create(
         model=settings.LLM_MODEL,
-        messages=build_messages(history, user_text),
+        messages=build_messages(history, user_text, context),
     )
     return resp.choices[0].message.content or ""
 
 
-def chat_stream(history: list, user_text: str):
+def chat_stream(history: list, user_text: str, context: str = ""):
     """流式生成器：逐块 yield 文本，用于 SSE。"""
     stream = client.chat.completions.create(
         model=settings.LLM_MODEL,
-        messages=build_messages(history, user_text),
+        messages=build_messages(history, user_text, context),
         stream=True,
     )
     for chunk in stream:

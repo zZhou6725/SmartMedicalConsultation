@@ -19,7 +19,7 @@ MATCH (n)
 WHERE n.name IS NOT NULL
 OPTIONAL MATCH (n)-[r]->(m)
 WITH n, collect(type(r) + '|' + coalesce(m.name, '')) AS rels
-RETURN labels(n)[0] AS type, n.name AS name, rels
+RETURN labels(n)[0] AS type, n.name AS name, n.desc AS desc, rels
 """
 
 
@@ -47,7 +47,8 @@ def main():
 
     metas, texts = [], []
     for row in rows:
-        text = build_text(row["type"], row["name"], row["rels"])
+        # 优先用节点 desc（含出边+入边，是完整语义句）；未回填时退回只拼出边的旧格式
+        text = row.get("desc") or build_text(row["type"], row["name"], row["rels"])
         texts.append(text)
         metas.append({"type": row["type"], "entity": row["name"], "content": text})
 

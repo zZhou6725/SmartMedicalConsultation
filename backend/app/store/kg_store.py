@@ -171,6 +171,33 @@ def expand_entity(name: str, depth: int = 1):
     }
 
 
+def get_triples(name: str) -> list:
+    """一对一双向三元组（起点, 关系, 终点），供 GraphRAG 图谱那一路扩展使用。
+
+    用无向匹配 -[r]- 再取 startNode/endNode，出边与入边一次拿全：
+    叶子节点（症状/科室/药物）只有入边，只取出边会查不到任何东西。
+    """
+    rows = run_read(
+        """
+        MATCH (n {name: $name})-[r]-(m)
+        RETURN startNode(r).name AS entity, labels(startNode(r))[0] AS entityType,
+               type(r) AS relation,
+               endNode(r).name AS related, labels(endNode(r))[0] AS relatedType
+        """,
+        name=_check_name(name),
+    )
+    return [
+        {
+            "entity": r["entity"],
+            "type": (r["entityType"] or "").lower(),
+            "relation": r["relation"],
+            "related": r["related"],
+            "relatedType": (r["relatedType"] or "").lower(),
+        }
+        for r in rows
+    ]
+
+
 def get_stats() -> dict:
     """图谱统计（接口17）：节点/关系总数 + 各类分布。"""
     node_count = run_read("MATCH (n) RETURN count(n) AS c")[0]["c"]
