@@ -14,7 +14,7 @@
 
 | 层 | 技术 |
 |---|---|
-| 数据层 | Neo4j 5.26（8 类节点 / 12 类关系）、FAISS（IndexIVFFlat）、BGE-M3 |
+| 数据层 | Neo4j 5.26（8 类节点 / 12 类关系）、FAISS（IndexFlatIP，内积=余弦）、BGE-M3（1024 维） |
 | 智能体层 | LangChain 0.1.x + LangGraph 0.0.x |
 | 大模型 | OpenAI 兼容接口（默认 DeepSeek；`.env` 一行切换本地 vLLM） |
 | 会话存储 | Redis 热缓存（最近 12 轮 / TTL 24h）；MySQL 全量持久化（P4） |
@@ -22,13 +22,17 @@
 | 前端层 | Vue3 + Vite + Element Plus（axios 统一请求封装 + Vite 代理） |
 | 基础设施 | docker-compose（Neo4j / Redis / MySQL） |
 
-## 已实现功能（截至 P2）
+## 已实现功能（截至 P3）
 
 - **核心对话**：SSE 流式逐字输出、多轮上下文、回车发送、自动滚动到底
 - **真实 LLM**：接入大模型（DeepSeek），回答简洁要点化、**不使用 emoji**
 - **会话历史**：Redis 热缓存（最近 12 轮 / TTL 24h）、左栏列表、点击切换复原、删除会话
 - **医疗安全层**：确定性规则引擎 —— 所有回答强制附带免责声明；用药类问题追加用药提醒
-- **医疗 UI**：免责警示条、响应耗时、一键复制、症状标签 / 推荐科室（结构就绪，数据待 P3）
+- **医疗 UI**：免责警示条、响应耗时、一键复制、症状标签 / 推荐科室（已由检索证据推导）
+- **知识图谱**：Neo4j 8 类实体 / 12 类关系，47 节点 52 关系；只读查询 + 五层防护（白名单 / 参数化 / 写关键词拦截 / 数值钳制 / 长度上限）
+- **向量检索**：BGE-M3 + FAISS（`IndexFlatIP`，1024 维），索引文本取节点 `desc`（图谱出边 + 入边自动生成的语义句）
+- **GraphRAG 混合检索**：向量语义召回 + 以命中实体为种子扩展图谱双向三元组，双路合并去重
+- **回答可溯源**：证据拼进 system 上下文做 grounded 作答，响应回传 `evidence`（`source` = `vector` / `kg`）；`symptoms` / `department` 均由证据推导，非硬编码
 
 ## 目录结构
 
@@ -36,12 +40,16 @@
 smart-medical-consultation/
 ├── backend/
 │   ├── app/
-│   │   ├── api/            # 接口层：system(/health)、chat、sessions
+│   │   ├── api/            # 接口层：system(/health)、chat、sessions、search、kg
 │   │   ├── services/       # 业务服务：llm（大模型调用）、safety（安全规则）
-│   │   ├── store/          # 数据访问：session_store（Redis 会话缓存）
-│   │   ├── agent/          # LangGraph 多 Agent 编排（P3）
-│   │   └── retrieval/      # 向量 / 图谱 / GraphRAG 检索（P3）
+│   │   ├── store/          # 数据访问：session_store（Redis）、kg_store（Neo4j 只读）
+│   │   ├── agent/          # LangGraph 多 Agent 编排（P3-4）
+│   │   └── retrieval/      # embeddings（BGE-M3）、vector_store（FAISS）、hybrid（GraphRAG）
 │   └── main.py             # 入口：CORS + 路由挂载
+├── knowledge/
+│   ├── relation_labels.py  # 关系类型 → 中文说明（建索引与 desc 回填共用）
+│   └── index/              # 向量索引构建脚本（产物 .index/.json 不入库，可重建）
+
 ├── frontend/               # Vue3 + Vite + Element Plus
 │   └── src/{api,utils}/    # 接口集中管理 + axios 统一请求封装
 ├── docker-compose.yml      # Neo4j(7474/7687) / MySQL(3307) / Redis(6379)
@@ -58,6 +66,12 @@ smart-medical-consultation/
 | `GET /api/chat/messages` | 会话消息列表 |
 | `GET /api/sessions` | 会话列表 |
 | `DELETE /api/sessions/{sessionId}` | 删除会话 |
+| `POST /api/search/hybrid` | GraphRAG 混合检索（向量 + 图谱双路） |
+| `POST /api/search/vector` | 向量语义检索 |
+| `POST /api/search/kg` | 图谱结构化检索（按实体名扩展关系） |
+| `GET /api/kg/entity/{type}/{name}` | 实体详情 + 关联关系 |
+| `GET /api/kg/search` | 图谱关键词搜索 |
+| `GET /api/kg/stats` | 图谱统计 |
 
 ## 快速开始
 
@@ -90,7 +104,7 @@ npm run dev                  # 运行在 http://localhost:5173
 - [x] P0 项目骨架搭建（前端 Vue3 + 后端 FastAPI + /health）
 - [x] P1 核心对话交互（消息收发 + SSE 流式）              ← P1-1 ~ P1-5
 - [x] P2 业务功能完善（真实 LLM、会话缓存、安全规则）      ← P2-1 ~ P2-5 + 会话删除
-- [ ] P3 核心技术壁垒（GraphRAG 混合检索 + 多 Agent 编排）
+- [x] P3 核心技术壁垒（向量检索 ✅ / 图谱只读查询 ✅ / GraphRAG 混合检索与证据溯源 ✅ / 多 Agent 编排待做）
 - [ ] P4 工程化收尾（MySQL 持久化、评估门禁、微调、一键部署）
 
 *本系统仅供健康咨询与就医指导，不能替代专业医疗诊断。身体不适请及时就医，切勿自行用药。*
