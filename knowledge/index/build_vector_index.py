@@ -3,20 +3,15 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # knowledge/ → relation_labels
 
 from neo4j import GraphDatabase                          # noqa: E402
 
 from app.config import settings                          # noqa: E402
 from app.retrieval.embeddings import encode              # noqa: E402
 from app.retrieval import vector_store as vs             # noqa: E402
-
-# 关系类型 → 中文说明：让检索文本更"像人话"，语义匹配更准
-REL_CN = {
-    "HAS_SYMPTOM": "常见症状", "BELONG_DISEASE": "相关疾病", "BELONG_DEPARTMENT": "建议科室",
-    "HAS_CAUSE": "病因", "HAS_CURE": "疗法", "HAS_TABOO": "禁忌",
-    "FIT_CROWD": "适用人群", "USE_DRUG": "常用药物", "DRUG_SUIT": "适应症",
-    "DRUG_SIDE_EFFECT": "副作用", "DRUG_TABOO_CROWD": "禁忌人群", "DRUG_INTERACT": "相互作用",
-}
+# 关系类型 → 中文说明：让检索文本更"像人话"，语义匹配更准（与 desc 回填脚本共用）
+from relation_labels import REL_CN                       # noqa: E402
 
 # 取每个节点 + 它的所有出边（关系类型|目标名）
 CYPHER = """
