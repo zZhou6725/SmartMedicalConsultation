@@ -9,6 +9,7 @@ from app.api.system import router as system_router
 from app.api.chat import router as chat_router
 from app.api.sessions import router as sessions_router
 from app.api.search import router as search_router
+from app.api.kg import router as kg_router
 from app.config import settings
 
 app = FastAPI(
@@ -30,7 +31,8 @@ app.add_middleware(
 app.include_router(system_router)
 app.include_router(chat_router)
 app.include_router(sessions_router)
-app.include_router(search_router)  
+app.include_router(search_router)
+app.include_router(kg_router)
 
 if __name__ == "__main__":
     import uvicorn
