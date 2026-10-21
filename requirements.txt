@@ -18,5 +18,8 @@ faiss-cpu>=1.8.0,<1.16
 sentence-transformers>=2.5.1,<4
 
 # 工具类
+# pydantic 2.9.x：2.4.2 自带的 pydantic.v1 兼容层在 Python >=3.12.4 上会报
+# TypeError: ForwardRef._evaluate() missing 'recursive_guard'，导致 langgraph 导入失败。
+# 2.9.x 已修复；不要升到 2.11+（该版本移除了 fastapi 0.104 依赖的 pydantic.fields.Undefined）。
 python-dotenv==1.0.0
-pydantic==2.4.2
+pydantic==2.9.2
