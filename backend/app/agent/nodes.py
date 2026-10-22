@@ -19,13 +19,21 @@ INTENT_RULES = [
                "多久能好", "严不严重", "严重吗", "会死吗"]),
     # 定义型问句优先于「实体名里恰好含症状词」的表层匹配：
     # 「偏头痛是什么」不该因为含「头痛」就被判成症状咨询
-    ("knowledge", ["是什么", "什么是", "介绍", "科普", "区别", "原理", "预防"]),
+    ("knowledge", ["是什么", "什么是", "有哪些", "介绍", "科普", "区别", "原理",
+                   "预防", "后遗症", "怎么治", "怎么护理", "需要手术", "有风险"]),
     ("symptom", ["症状", "头疼", "头痛", "发烧", "发热", "咳嗽", "恶心", "呕吐",
-                 "头晕", "腹痛", "胃痛", "胃部不适", "水肿", "流鼻涕", "不适",
+                 "头晕", "腹痛", "胃痛", "胃部不适", "不舒服", "反酸", "胃胀",
+                 "腹胀", "腹泻", "便秘", "乏力", "水肿", "流鼻涕", "不适",
+                 "口渴", "多尿", "消瘦", "体重下降",
                  "疼", "痛", "痒", "失眠"]),
     # 因果型问句放在症状之后：「最近老是头晕是怎么回事」更可能是症状咨询
     ("knowledge", ["怎么回事", "为什么", "原因", "病因"]),
 ]
+
+# 医疗分支检索不到内容时注入的占位上下文。
+# 作用：让 llm.build_messages 里的 grounded 约束生效，强制模型说「资料未覆盖、请就医」，
+# 而不是凭参数记忆编造答案。
+EMPTY_CONTEXT = "参考资料：本地医疗知识库中未检索到与该问题相关的内容。"
 
 # 各医疗分支给工具调度器的提示（引导优先用合适的工具，但不限制只能调一个）
 BRANCH_HINTS = {
@@ -126,9 +134,17 @@ def _medical_agent(state, branch: str):
         {"source": e["source"], "type": e["type"], "content": e["content"]}
         for e in evidence
     ]
+
+    context = hybrid.build_context(public_evidence)
+    if not context:
+        # 检索不到内容时也必须给模型一个明确的「无资料」信号。
+        # 否则 context 为空 → grounded 约束不会注入 → 模型会凭参数记忆自由作答，
+        # 这是最危险的幻觉入口（评估里 sy08 / oo06 就是这样漏出去的）。
+        context = EMPTY_CONTEXT
+
     return {
         "evidence": public_evidence,
-        "context": hybrid.build_context(public_evidence),
+        "context": context,
         "symptoms": symptoms,
         "department": department,
         "tool_log": tool_log,

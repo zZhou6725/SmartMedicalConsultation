@@ -38,6 +38,7 @@
 - **Tool Calling**：五个医疗分支内由大模型自主决定调用 `vector_search` / `kg_search` / `kg_expand`（可多工具、多轮），工具执行结果既回灌给模型也写入 `evidence`；模型未调工具时自动兜底走固定混合检索
 - **急症预警**：确定性关键词表（胸痛 / 呼吸困难 / 剧烈头痛 / 言语不清 / 抽搐 / 大出血等）命中即置顶**红色警示卡片**，并强制模型先提示拨打 120 或急诊、不给用药建议；关键词刻意收窄，普通「头痛」「肚子疼」不误触发
 - **高危问题风控**：剂量 / 禁忌 / 联合用药 / 孕哺儿童等关键词命中时，强制模型不给具体剂量与方案、只做原则性说明并引导咨询医师药师
+- **自动化评估门禁**：53 条金标集分 8 类（急症 / 科室 / 用药 / 症状 / 知识 / 拒答 / 超范围 / 闲聊），四层评估 —— 硬规则（免责声明覆盖率、急症召回率、拒答合规率）**一票否决** + 关键词命中 + 检索 Recall@5/MRR + LLM 裁判；产出 Markdown 评测报告（含失败用例 trace）并回写 `eval_record` 表
 
 ## 目录结构
 
@@ -45,15 +46,19 @@
 smart-medical-consultation/
 ├── backend/
 │   ├── app/
-│   │   ├── api/            # 接口层：system(/health)、chat、sessions、search、kg
+│   │   ├── api/            # 接口层：system(/health)、chat、sessions、search、kg、eval_api
 │   │   ├── services/       # 业务服务：llm（大模型调用）、safety（安全规则）
-│   │   ├── store/          # 数据访问：session_store（Redis）、kg_store（Neo4j 只读）
+│   │   ├── store/          # 数据访问：session_store（Redis+MySQL）、kg_store（Neo4j 只读）、eval_repo
 │   │   ├── agent/          # 多 Agent 编排：state（状态）、tools（Tool Calling）、nodes（节点）、graph（状态图）
+│   │   ├── eval/           # 评估引擎：golden（金标集）、metrics（指标）、judge（LLM 裁判）、runner（执行）
 │   │   └── retrieval/      # embeddings（BGE-M3）、vector_store（FAISS）、hybrid（GraphRAG）
 │   └── main.py             # 入口：CORS + 路由挂载
 ├── knowledge/
 │   ├── relation_labels.py  # 关系类型 → 中文说明（建索引与 desc 回填共用）
 │   └── index/              # 向量索引构建脚本（产物 .index/.json 不入库，可重建）
+├── eval/
+│   ├── golden_set.json     # 53 条金标集（入库，版本化）
+│   └── reports/            # 评测报告产物（不入库，可重建）
 
 ├── frontend/               # Vue3 + Vite + Element Plus
 │   └── src/{api,utils}/    # 接口集中管理 + axios 统一请求封装
@@ -77,6 +82,9 @@ smart-medical-consultation/
 | `GET /api/kg/entity/{type}/{name}` | 实体详情 + 关联关系 |
 | `GET /api/kg/search` | 图谱关键词搜索 |
 | `GET /api/kg/stats` | 图谱统计 |
+| `POST /api/eval/run` | 触发自动化评估（返回通过率 / 分层指标 / 门禁结论） |
+| `GET /api/eval/records` | 评估记录分页查询 |
+| `GET /api/eval/records/{id}` | 评估记录详情 |
 
 ## 快速开始
 
@@ -110,6 +118,6 @@ npm run dev                  # 运行在 http://localhost:5173
 - [x] P1 核心对话交互（消息收发 + SSE 流式）              ← P1-1 ~ P1-5
 - [x] P2 业务功能完善（真实 LLM、会话缓存、安全规则）      ← P2-1 ~ P2-5 + 会话删除
 - [x] P3 核心技术壁垒（向量检索 / 图谱只读查询 / GraphRAG 混合检索与证据溯源 / 多 Agent 编排 + Tool Calling / 急症预警与高危风控）← P3-1 ~ P3-5 全部完成
-- [x] P4 工程化收尾 —— MySQL 全量持久化 ✅（P4-1）/ 评估门禁、微调、一键部署待做
+- [x] P4 工程化收尾 —— MySQL 全量持久化 ✅（P4-1）/ 自动化评估门禁 ✅（P4-2）/ 微调、一键部署待做
 
 *本系统仅供健康咨询与就医指导，不能替代专业医疗诊断。身体不适请及时就医，切勿自行用药。*

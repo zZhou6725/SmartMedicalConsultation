@@ -41,11 +41,20 @@ def build_messages(history: list, user_text: str, context: str = "", rules: str 
     return msgs
 
 
-def chat_once(history: list, user_text: str, context: str = "", rules: str = "") -> str:
-    """非流式：一次返回完整回复。"""
+def chat_once(history: list, user_text: str, context: str = "", rules: str = "",
+              temperature: float | None = None) -> str:
+    """非流式：一次返回完整回复。
+
+    temperature 为 None 时用服务端默认（生产环境要自然度）；
+    评估场景应显式传 0，否则同一用例两次跑分可能不同，指标不可复现。
+    """
+    kwargs = {}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
     resp = client.chat.completions.create(
         model=settings.LLM_MODEL,
         messages=build_messages(history, user_text, context, rules),
+        **kwargs,
     )
     return resp.choices[0].message.content or ""
 

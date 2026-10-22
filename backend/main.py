@@ -10,6 +10,7 @@ from app.api.chat import router as chat_router
 from app.api.sessions import router as sessions_router
 from app.api.search import router as search_router
 from app.api.kg import router as kg_router
+from app.api.eval_api import router as eval_router
 from app.config import settings
 
 app = FastAPI(
@@ -33,6 +34,7 @@ app.include_router(chat_router)
 app.include_router(sessions_router)
 app.include_router(search_router)
 app.include_router(kg_router)
+app.include_router(eval_router)
 
 
 @app.on_event("startup")

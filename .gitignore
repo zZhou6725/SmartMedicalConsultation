@@ -24,6 +24,9 @@ data/raw/
 knowledge/index/*.index
 knowledge/index/*.json
 
+# 评测报告产物（可重建：cd backend && python -m app.eval）
+eval/reports/
+
 # 接口测试产生的临时文件
 resp.json
 resp*.json
