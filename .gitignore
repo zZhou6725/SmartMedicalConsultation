@@ -30,6 +30,16 @@ resp*.json
 payload.json
 payload*.json
 
+# 工具链产生的临时工作目录（沙箱/安装器）
+tmp*/
+_probe*.json
+_verify*.json
+_regress*.json
+_agent_test.json
+_p34.json
+_check.json
+_out.json
+
 # 内部文档与脚本（不随仓库公开）
 docs/
 scripts/

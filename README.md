@@ -33,6 +33,8 @@
 - **向量检索**：BGE-M3 + FAISS（`IndexFlatIP`，1024 维），索引文本取节点 `desc`（图谱出边 + 入边自动生成的语义句）
 - **GraphRAG 混合检索**：向量语义召回 + 以命中实体为种子扩展图谱双向三元组，双路合并去重
 - **回答可溯源**：证据拼进 system 上下文做 grounded 作答，响应回传 `evidence`（`source` = `vector` / `kg`）；`symptoms` / `department` 均由证据推导，非硬编码
+- **多 Agent 编排**：LangGraph 状态图 —— 意图识别 → 条件路由到 6 个分支（症状 / 科室 / 用药 / 医学知识 / 就医指导 / 通用）→ 强制汇聚安全检查
+- **Tool Calling**：五个医疗分支内由大模型自主决定调用 `vector_search` / `kg_search` / `kg_expand`（可多工具、多轮），工具执行结果既回灌给模型也写入 `evidence`；模型未调工具时自动兜底走固定混合检索
 
 ## 目录结构
 
@@ -43,7 +45,7 @@ smart-medical-consultation/
 │   │   ├── api/            # 接口层：system(/health)、chat、sessions、search、kg
 │   │   ├── services/       # 业务服务：llm（大模型调用）、safety（安全规则）
 │   │   ├── store/          # 数据访问：session_store（Redis）、kg_store（Neo4j 只读）
-│   │   ├── agent/          # LangGraph 多 Agent 编排（P3-4）
+│   │   ├── agent/          # 多 Agent 编排：state（状态）、tools（Tool Calling）、nodes（节点）、graph（状态图）
 │   │   └── retrieval/      # embeddings（BGE-M3）、vector_store（FAISS）、hybrid（GraphRAG）
 │   └── main.py             # 入口：CORS + 路由挂载
 ├── knowledge/
@@ -104,7 +106,7 @@ npm run dev                  # 运行在 http://localhost:5173
 - [x] P0 项目骨架搭建（前端 Vue3 + 后端 FastAPI + /health）
 - [x] P1 核心对话交互（消息收发 + SSE 流式）              ← P1-1 ~ P1-5
 - [x] P2 业务功能完善（真实 LLM、会话缓存、安全规则）      ← P2-1 ~ P2-5 + 会话删除
-- [x] P3 核心技术壁垒（向量检索 ✅ / 图谱只读查询 ✅ / GraphRAG 混合检索与证据溯源 ✅ / 多 Agent 编排待做）
+- [x] P3 核心技术壁垒（向量检索 ✅ / 图谱只读查询 ✅ / GraphRAG 混合检索与证据溯源 ✅ / 多 Agent 编排 + Tool Calling ✅ / 急症预警待做）
 - [ ] P4 工程化收尾（MySQL 持久化、评估门禁、微调、一键部署）
 
 *本系统仅供健康咨询与就医指导，不能替代专业医疗诊断。身体不适请及时就医，切勿自行用药。*

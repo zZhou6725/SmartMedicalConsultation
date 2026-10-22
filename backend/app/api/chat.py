@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from app.services.llm import chat_once, chat_stream as llm_stream
 from app.store.session_store import load_session, save_session
 from app.services.safety import safety_fields
-from app.retrieval import hybrid
+from app.agent.graph import run_agent
 # Pydantic，用来定义请求体、自动做参数校验（比如 message 不能为空）
 
 
@@ -23,35 +23,26 @@ router = APIRouter()
 # 免责声明
 DISCLAIMER = "本回答仅供健康咨询与就医指导，不能替代专业医疗诊断。身体不适请及时就医，切勿自行用药。"
 
-# 每路检索返回条数（证据拼进 prompt 的规模）
-RETRIEVAL_TOP_K = 5
 
+def retrieve(message: str, history: list | None = None) -> dict:
+    """走 LangGraph 多 Agent 编排，拿到意图、证据、上下文与安全字段。
 
-def retrieve(message: str) -> dict:
-    """混合检索 + 从检索结果推症状标签与推荐科室。
-
-    symptoms 取向量命中里类型为 symptom 的实体名；
-    department 取图谱扩展结果里 BELONG_DEPARTMENT 关系的终点名。
-    两者都由证据推导，不再写死。
-
-    检索异常（Neo4j/FAISS 不可用）时返回空证据，不阻断对话主流程。
+    编排内部：意图识别 → 分支（五路医疗分支内含 Tool Calling）→ 安全检查汇聚。
+    编排失败时返回空证据，退化为普通对话，不阻断主流程。
     """
-    empty = {"evidence": [], "context": "", "symptoms": [], "department": ""}
+    empty = {"evidence": [], "context": "", "symptoms": [], "department": "",
+             "intent": "general", "tool_log": []}
     try:
-        data = hybrid.hybrid_search(message, RETRIEVAL_TOP_K)
+        state = run_agent(message, history or [])
     except Exception:
         return empty
-
-    evidence = hybrid.evidence_from(data)
-    symptoms = [r["entity"] for r in data["vectorResults"] if r["type"] == "symptom"][:3]
-    department = next(
-        (g["related"] for g in data["graphResults"] if g["relation"] == "BELONG_DEPARTMENT"), ""
-    )
     return {
-        "evidence": evidence,
-        "context": hybrid.build_context(evidence),
-        "symptoms": symptoms,
-        "department": department,
+        "evidence": state.get("evidence") or [],
+        "context": state.get("context") or "",
+        "symptoms": state.get("symptoms") or [],
+        "department": state.get("department") or "",
+        "intent": state.get("intent") or "general",
+        "tool_log": state.get("tool_log") or [],
     }
 
 
@@ -68,7 +59,7 @@ def chat(req: ChatRequest):
     mid = f"msg-{int(time.time() * 1000)}"
 
     history = load_session(sid)    #读历史
-    ev = retrieve(req.message)     #混合检索：证据 + 症状 + 科室
+    ev = retrieve(req.message, history)     #多 Agent 编排：意图 + 证据 + 安全
     try:
         reply = chat_once(history, req.message, ev["context"])
     except Exception as e:
@@ -91,6 +82,7 @@ def chat(req: ChatRequest):
             "reply": reply,
             "symptoms": ev["symptoms"],
             "department": ev["department"],
+            "intent": ev["intent"],
             "disclaimer": DISCLAIMER,
             "medReminder": sf["medReminder"],
             "consumeTime": consume,
@@ -120,7 +112,7 @@ async def chat_stream_handler(req: ChatStreamRequest):
     def generator():
         start = time.time()
         yield sse({"type": "meta", "sessionId": sid, "messageId": mid})
-        ev = retrieve(req.message)          # 先发 meta，检索在流内做，首字节不被拖慢
+        ev = retrieve(req.message, history)   # 先发 meta，编排在流内做，首字节不被拖慢
         acc = []
         try:
             for piece in llm_stream(history, req.message, ev["context"]):
@@ -138,6 +130,7 @@ async def chat_stream_handler(req: ChatStreamRequest):
             "consumeTime": consume,
             "symptoms": ev["symptoms"],
             "department": ev["department"],
+            "intent": ev["intent"],
             "disclaimer": DISCLAIMER,
             "medReminder": sf["medReminder"],
             "evidence": ev["evidence"],
