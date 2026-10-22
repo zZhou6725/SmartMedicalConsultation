@@ -34,6 +34,21 @@ app.include_router(sessions_router)
 app.include_router(search_router)
 app.include_router(kg_router)
 
+
+@app.on_event("startup")
+def _init_mysql():
+    """启动时建表/补列（幂等）。
+
+    MySQL 不可用不影响服务启动 —— 此时对话仍可跑，只是历史无法跨重启恢复。
+    """
+    from app.store.db import ensure_schema
+
+    try:
+        ensure_schema()
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     import uvicorn
 

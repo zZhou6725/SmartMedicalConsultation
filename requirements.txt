@@ -3,7 +3,9 @@ fastapi==0.104.1
 uvicorn==0.24.0
 
 # 数据库连接
-pymysql==1.1.0
+# pymysql[rsa]：MySQL 8 默认认证插件是 caching_sha2_password，
+# 密码需 RSA 加密传输，PyMySQL 为此依赖 cryptography（rsa extra）
+pymysql[rsa]==1.1.0
 redis==5.0.1
 neo4j==5.18.0
 sqlalchemy==2.0.23

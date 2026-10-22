@@ -16,7 +16,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 from app.services.llm import chat_once, chat_stream as llm_stream
-from app.store.session_store import load_session, save_session
+from app.store.session_store import load_history, load_session, save_turn
 from app.services.safety import risk_rules, safety_fields
 from app.agent.graph import run_agent
 # Pydantic，用来定义请求体、自动做参数校验（比如 message 不能为空）
@@ -75,7 +75,8 @@ def chat(req: ChatRequest):
     history.append({"role": "user", "content": req.message})
     history.append({"role": "assistant", "content": reply, "consumeTime": consume,
                     "emergency": sf["emergency"]})   # 历史带急症标记，切换会话可复原红警
-    save_session(sid, history)
+    save_turn(sid, history, req.message, reply, consume,
+              {"emergency": sf["emergency"]})        # Redis 热缓存 + MySQL 全量落库
 
     return {
         "code": 1,
@@ -135,10 +136,12 @@ async def chat_stream_handler(req: ChatStreamRequest):
         except Exception as e:
             yield sse({"type": "error", "code": 0, "msg": f"调用大模型失败：{e}"})
         consume = int((time.time() - start) * 1000)
+        answer = "".join(acc)
         history.append({"role": "user", "content": req.message})
-        history.append({"role": "assistant", "content": "".join(acc), "consumeTime": consume,
+        history.append({"role": "assistant", "content": answer, "consumeTime": consume,
                         "emergency": sf["emergency"]})
-        save_session(sid, history)
+        save_turn(sid, history, req.message, answer, consume,
+                  {"emergency": sf["emergency"]})    # Redis 热缓存 + MySQL 全量落库
         yield sse({
             "type": "done",
             "consumeTime": consume,
@@ -155,5 +158,6 @@ async def chat_stream_handler(req: ChatStreamRequest):
 
 @router.get("/api/chat/messages")
 def get_messages(sessionId: str):
-    msgs = load_session(sessionId)
+    """会话消息列表（历史复原）：走 MySQL 全量，Redis 兜底。"""
+    msgs = load_history(sessionId)
     return {"code": 1, "msg": "success", "data": {"total": len(msgs), "rows": msgs}}

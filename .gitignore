@@ -32,6 +32,8 @@ payload*.json
 
 # 工具链产生的临时工作目录（沙箱/安装器）
 tmp*/
+pip-*/
+_wheels*/
 _probe*.json
 _verify*.json
 _regress*.json
