@@ -1,4 +1,9 @@
-"""确定性安全层：免责声明 + 用药提醒（纯规则引擎，不依赖 LLM）。"""
+"""确定性安全层：免责声明 + 用药提醒 + 急症预警 + 高危问题约束（纯规则引擎，不依赖 LLM）。
+
+设计原则：医疗场景的红线不交给概率模型。
+本模块只做「输入 → 判定 → 固定文案/固定约束」的确定性映射，
+因此 100% 可复现、可单元测试，也是 P4-2 评估门禁里「免责声明覆盖率 / 急症召回率」的计算基础。
+"""
 
 # 标准免责声明（所有医疗回答强制附带）
 DISCLAIMER = "本回答仅供健康咨询与就医指导，不能替代专业医疗诊断。身体不适请及时就医，切勿自行用药。"
@@ -13,15 +18,86 @@ DRUG_KEYWORDS = [
     "感冒灵", "抗生素", "止痛药", "消炎药", "退烧药", "中药", "西药",
 ]
 
+# 急症关键词（命中即置顶红色预警）
+# 注意只收「明确指向危急」的表述：不带修饰的「头痛」「肚子疼」不能进表，
+# 否则常见症状会天天误触发红警，预警就失去意义（用「剧烈头痛」这类限定词）
+EMERGENCY_KEYWORDS = [
+    # 心脑血管
+    "胸痛", "胸口疼", "胸口痛", "心前区痛", "心绞痛", "心梗", "心慌得厉害",
+    "呼吸困难", "喘不上气", "喘不过气", "憋气", "窒息",
+    "剧烈头痛", "炸裂样头痛", "说话不清", "口齿不清", "口角歪斜",
+    "半身麻木", "一侧无力", "偏瘫", "抽搐", "口吐白沫",
+    # 意识与循环
+    "意识模糊", "昏迷", "晕倒", "休克", "叫不醒", "大出血", "止不住血",
+    # 其他危急
+    "呕血", "咯血", "便血", "血尿", "严重过敏", "喉头水肿", "窒息感",
+    "高热惊厥", "自杀", "想死", "不想活",
+]
+
+# 高危关键词（不禁答，但禁止给具体剂量/方案，强制引导专业医护）
+HIGH_RISK_KEYWORDS = [
+    "剂量", "几片", "多少毫克", "多少ml", "加量", "减量", "停药", "换药",
+    "一起吃", "同时服用", "混着吃", "联合用药", "过量", "吃多了",
+    "孕妇", "哺乳期", "备孕", "儿童用量", "婴儿", "肝肾功能",
+    "禁忌", "相互作用", "冲突",
+]
+
+# 命中急症时追加给大模型的硬性约束
+EMERGENCY_RULES = (
+    "用户描述的症状可能属于急症。你的回答必须："
+    "第一句就明确提示立即拨打 120 或前往最近医院急诊，不要等待观察；"
+    "不要给出任何具体用药建议、剂量或家庭处置方案；"
+    "不要淡化风险、不要说「不用太担心」或「先观察一下」。"
+)
+
+# 命中高危问题时追加给大模型的硬性约束
+HIGH_RISK_RULES = (
+    "该问题涉及剂量、禁忌或联合用药等高危内容。你的回答必须："
+    "不给出任何具体剂量、加减量方案或替代用药建议；"
+    "明确提示遵医嘱，并建议咨询医师或药师；"
+    "只做原则性说明。"
+)
+
 
 def is_drug_question(text: str) -> bool:
     """是否用药相关问题。"""
-    return any(k in text for k in DRUG_KEYWORDS)
+    return any(k in (text or "") for k in DRUG_KEYWORDS)
+
+
+def is_high_risk(text: str) -> bool:
+    """是否涉及剂量/禁忌/联用等高危内容。"""
+    return any(k in (text or "") for k in HIGH_RISK_KEYWORDS)
+
+
+def detect_emergency(text: str) -> dict:
+    """急症识别：返回 {hit, keywords, message}。"""
+    text = text or ""
+    hits = [k for k in EMERGENCY_KEYWORDS if k in text]
+    if not hits:
+        return {"hit": False, "keywords": [], "message": ""}
+    return {
+        "hit": True,
+        "keywords": hits,
+        "message": (
+            f"你提到的「{'、'.join(hits)}」可能是急症信号，"
+            "请立即拨打 120 或前往最近医院急诊就医，不要等待观察，也不要自行用药。"
+        ),
+    }
+
+
+def risk_rules(question: str) -> str:
+    """按风险等级返回要追加给大模型的硬性约束（急症优先于高危）。"""
+    if detect_emergency(question)["hit"]:
+        return EMERGENCY_RULES
+    if is_high_risk(question):
+        return HIGH_RISK_RULES
+    return ""
 
 
 def safety_fields(question: str) -> dict:
-    """安全字段：免责声明（恒定非空）+ 用药提醒（用药问题才非空）。"""
+    """安全字段：免责声明恒定非空；用药问题带用药提醒；急症带预警。"""
     return {
         "disclaimer": DISCLAIMER,
         "medReminder": MED_REMINDER if is_drug_question(question) else "",
+        "emergency": detect_emergency(question),
     }

@@ -23,29 +23,38 @@ GROUNDED_RULE = (
 )
 
 
-def build_messages(history: list, user_text: str, context: str = "") -> list:
-    """拼装消息列表。context 非空即为 RAG 模式：证据随 system 一起下发。"""
-    system = f"{SYSTEM_PROMPT}\n\n{context}\n\n{GROUNDED_RULE}" if context else SYSTEM_PROMPT
-    msgs = [{"role": "system", "content": system}]
+def build_messages(history: list, user_text: str, context: str = "", rules: str = "") -> list:
+    """拼装消息列表。
+
+    context 非空即为 RAG 模式：证据随 system 一起下发，并追加 grounded 约束；
+    rules 是安全层按风险等级下发的硬性约束（急症/高危），优先级最高、放最后强调。
+    """
+    blocks = [SYSTEM_PROMPT]
+    if context:
+        blocks.append(context)
+        blocks.append(GROUNDED_RULE)
+    if rules:
+        blocks.append(rules)
+    msgs = [{"role": "system", "content": "\n\n".join(blocks)}]
     msgs.extend(history)
     msgs.append({"role": "user", "content": user_text})
     return msgs
 
 
-def chat_once(history: list, user_text: str, context: str = "") -> str:
+def chat_once(history: list, user_text: str, context: str = "", rules: str = "") -> str:
     """非流式：一次返回完整回复。"""
     resp = client.chat.completions.create(
         model=settings.LLM_MODEL,
-        messages=build_messages(history, user_text, context),
+        messages=build_messages(history, user_text, context, rules),
     )
     return resp.choices[0].message.content or ""
 
 
-def chat_stream(history: list, user_text: str, context: str = ""):
+def chat_stream(history: list, user_text: str, context: str = "", rules: str = ""):
     """流式生成器：逐块 yield 文本，用于 SSE。"""
     stream = client.chat.completions.create(
         model=settings.LLM_MODEL,
-        messages=build_messages(history, user_text, context),
+        messages=build_messages(history, user_text, context, rules),
         stream=True,
     )
     for chunk in stream:

@@ -95,6 +95,7 @@ async function send() {
           aiMsg.department = data.department
           aiMsg.disclaimer = data.disclaimer
           aiMsg.medReminder = data.medReminder
+          aiMsg.emergency = data.emergency     // 急症预警：命中则置顶红色卡片
           aiMsg.consumeTime = data.consumeTime
         }
       }
@@ -206,6 +207,14 @@ async function deleteChat(sid) {
               </div>
               <div class="ai-body">
                 <div class="card">
+                  <!-- 急症预警：确定性规则命中时置顶红色卡片，与普通回答明显区分 -->
+                  <div v-if="msg.emergency && msg.emergency.hit" class="emergency-card">
+                    <div class="emergency-head">
+                      <el-icon :size="15"><WarningFilled/></el-icon>
+                      <span>急症预警 · 请立即就医</span>
+                    </div>
+                    <div class="emergency-text">{{ msg.emergency.message }}</div>
+                  </div>
                   <div class="card-title">智慧问诊AGENT系统</div>
                   <div class="advice-title">💡 就医建议：</div>
                   <div class="card-text">{{ msg.content }}</div>
@@ -256,6 +265,12 @@ async function deleteChat(sid) {
 .app { height: 100vh; width: 100%; display: flex; flex-direction: column; background: #e9f1ef; --el-color-primary: #2f9e8f; --el-color-primary-light-3: #5cbaac; --el-color-primary-light-5: #8fd0c7; --el-color-primary-light-7: #c2e5df; --el-color-primary-light-8: #d9f0ec; --el-color-primary-light-9: #eef7f5; --el-color-primary-dark-2: #26847a; }
 .warn-bar { margin: 16px 16px 4px; background: #fff3e0; color: #e0813d; border-radius: 10px; display: flex; align-items: center; justify-content: flex-start; gap: 8px; font-size: 13px; padding: 12px 16px; box-sizing: border-box; height: auto; min-height: 42px; }
 .warn-bar .el-icon { flex-shrink: 0; }
+
+/* 急症预警置顶红色卡片（P3-5） */
+.emergency-card { background: #fff1f0; border: 1px solid #ffa39e; border-left: 4px solid #f5222d; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; animation: emergency-in .3s ease-out; }
+.emergency-head { display: flex; align-items: center; gap: 6px; color: #cf1322; font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+.emergency-text { color: #a8071a; font-size: 13px; line-height: 1.6; }
+@keyframes emergency-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 .body { flex: 1; display: flex; flex-direction: row; gap: 20px; padding: 20px 24px 24px; overflow: hidden; box-sizing: border-box; max-width: 1120px; margin: 0 auto; width: 100%; }
 
 .sidebar { background: #fff; border-radius: 16px; border: 1px solid #e3eeeb; padding: 20px 18px; display: flex; flex-direction: column; box-sizing: border-box; flex-shrink: 0; }

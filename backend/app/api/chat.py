@@ -2,7 +2,11 @@
 
 P3-3 起接入 GraphRAG 混合检索：每个用户问题先检索本地医疗知识库，
 把证据拼进 system 上下文（grounded 作答），并在响应中回传 evidence 供溯源。
-检索失败不阻断对话，退化为普通对话。
+P3-4 起检索改由 LangGraph 多 Agent 编排驱动（意图路由 + Tool Calling）。
+P3-5 起叠加急症预警与高危问题约束：命中急症时置顶红色预警，
+并给大模型下发「先提示立即就医、不给用药建议」的硬性约束。
+
+检索/编排失败不阻断对话，退化为普通对话。
 """
 import time
 import uuid  #随机数
@@ -13,7 +17,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 from app.services.llm import chat_once, chat_stream as llm_stream
 from app.store.session_store import load_session, save_session
-from app.services.safety import safety_fields
+from app.services.safety import risk_rules, safety_fields
 from app.agent.graph import run_agent
 # Pydantic，用来定义请求体、自动做参数校验（比如 message 不能为空）
 
@@ -60,18 +64,18 @@ def chat(req: ChatRequest):
 
     history = load_session(sid)    #读历史
     ev = retrieve(req.message, history)     #多 Agent 编排：意图 + 证据 + 安全
+    sf = safety_fields(req.message)         #确定性安全层：急症/高危约束要下发给模型
     try:
-        reply = chat_once(history, req.message, ev["context"])
+        reply = chat_once(history, req.message, ev["context"], risk_rules(req.message))
     except Exception as e:
         reply = f"（调用大模型失败，请检查 LLM_API_KEY 或网络）"
 
     # 追加并缓存（TTL 24h / 最近12轮）
     consume = int((time.time() - start) * 1000)
     history.append({"role": "user", "content": req.message})
-    history.append({"role": "assistant", "content": reply, "consumeTime": consume})  # ← 带上耗时
+    history.append({"role": "assistant", "content": reply, "consumeTime": consume,
+                    "emergency": sf["emergency"]})   # 历史带急症标记，切换会话可复原红警
     save_session(sid, history)
-
-    sf = safety_fields(req.message)
 
     return {
         "code": 1,
@@ -85,6 +89,7 @@ def chat(req: ChatRequest):
             "intent": ev["intent"],
             "disclaimer": DISCLAIMER,
             "medReminder": sf["medReminder"],
+            "emergency": sf["emergency"],
             "consumeTime": consume,
             "evidence": ev["evidence"],
         },
@@ -113,18 +118,20 @@ async def chat_stream_handler(req: ChatStreamRequest):
         start = time.time()
         yield sse({"type": "meta", "sessionId": sid, "messageId": mid})
         ev = retrieve(req.message, history)   # 先发 meta，编排在流内做，首字节不被拖慢
+        sf = safety_fields(req.message)       # 确定性安全层（急症/高危要下发给模型）
         acc = []
         try:
-            for piece in llm_stream(history, req.message, ev["context"]):
+            for piece in llm_stream(history, req.message, ev["context"],
+                                    risk_rules(req.message)):
                 acc.append(piece)  # ← 补：累积文本
                 yield sse({"type": "delta", "content": piece})
         except Exception as e:
             yield sse({"type": "error", "code": 0, "msg": f"调用大模型失败：{e}"})
         consume = int((time.time() - start) * 1000)
         history.append({"role": "user", "content": req.message})
-        history.append({"role": "assistant", "content": "".join(acc), "consumeTime": consume})
+        history.append({"role": "assistant", "content": "".join(acc), "consumeTime": consume,
+                        "emergency": sf["emergency"]})
         save_session(sid, history)
-        sf = safety_fields(req.message)
         yield sse({
             "type": "done",
             "consumeTime": consume,
@@ -133,6 +140,7 @@ async def chat_stream_handler(req: ChatStreamRequest):
             "intent": ev["intent"],
             "disclaimer": DISCLAIMER,
             "medReminder": sf["medReminder"],
+            "emergency": sf["emergency"],
             "evidence": ev["evidence"],
         })
 

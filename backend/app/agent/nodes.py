@@ -4,7 +4,7 @@
 """
 from app.agent import tools
 from app.retrieval import hybrid
-from app.services.safety import safety_fields
+from app.services.safety import detect_emergency, safety_fields
 
 # 意图关键词表：列表顺序即优先级，越具体的意图排越前
 # （"头痛吃什么药" 同时命中症状与用药，应判为 drug —— 用药需求更明确）
@@ -39,12 +39,18 @@ BRANCH_HINTS = {
 
 
 def classify_intent(message: str) -> str:
-    """意图识别：确定性关键词规则，按优先级取第一个命中。
+    """意图识别：急症优先，其次确定性关键词规则（按优先级取第一个命中）。
 
     为什么用规则而不是让大模型分类：意图决定**控制流**（走哪条分支），
     可控性与可测试性优先；模型的不确定性留给更需要判断力的工具选择环节。
     """
     text = (message or "").lower()
+
+    # 急症优先：不管用户怎么问（"胸痛怎么办"/"胸口疼得厉害"），
+    # 一律走就医指导分支，避免被「疼」这类泛症状词吞掉
+    if detect_emergency(text)["hit"]:
+        return "guide"
+
     for intent, keywords in INTENT_RULES:
         if any(k in text for k in keywords):
             return intent
