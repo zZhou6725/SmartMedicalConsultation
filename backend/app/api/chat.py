@@ -117,8 +117,15 @@ async def chat_stream_handler(req: ChatStreamRequest):
     def generator():
         start = time.time()
         yield sse({"type": "meta", "sessionId": sid, "messageId": mid})
-        ev = retrieve(req.message, history)   # 先发 meta，编排在流内做，首字节不被拖慢
-        sf = safety_fields(req.message)       # 确定性安全层（急症/高危要下发给模型）
+
+        # 安全层是纯规则、微秒级，先算先发：
+        # 急症警示必须第一个到达前端——等编排+工具调用+生成跑完再提示「快打 120」，
+        # 方向是反的（实测那段要 8 秒）。done 帧里仍会再带一次，便于幂等与历史复原。
+        sf = safety_fields(req.message)
+        if sf["emergency"]["hit"]:
+            yield sse({"type": "emergency", **sf["emergency"]})
+
+        ev = retrieve(req.message, history)   # 编排较慢，放在急症提示之后
         acc = []
         try:
             for piece in llm_stream(history, req.message, ev["context"],

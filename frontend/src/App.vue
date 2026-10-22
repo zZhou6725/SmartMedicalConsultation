@@ -87,6 +87,10 @@ async function send() {
         const data = JSON.parse(line.slice(6))
         if (data.type === 'meta') {
           sessionId.value = data.sessionId    // 从 meta 里拿并保存
+        } else if (data.type === 'emergency') {
+          // 急症预警会先于正文到达：立刻渲染红卡，不等待 8 秒的检索与生成
+          aiMsg.emergency = { hit: data.hit, keywords: data.keywords, message: data.message }
+          scrollToBottom()
         } else if (data.type === 'delta') {
           aiMsg.content += data.content
           scrollToBottom()
