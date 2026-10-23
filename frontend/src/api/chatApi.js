@@ -33,3 +33,8 @@ export function getMessages(sessionId) {
 export function deleteSession(sessionId) {
   return request({ url: `/sessions/${sessionId}`, method: 'DELETE' })
 }
+
+// 系统状态（GET /api/system/status）：真实探活各组件 + 业务运行指标
+export function getSystemStatus() {
+  return request({ url: '/system/status', method: 'GET' })
+}

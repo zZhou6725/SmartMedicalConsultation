@@ -71,6 +71,7 @@ smart-medical-consultation/
 | 方法与路径 | 说明 |
 |---|---|
 | `GET /health` | 健康检查 |
+| `GET /api/system/status` | 系统状态：6 组件真实探活 + 业务运行指标 |
 | `POST /api/chat` | 发送对话（非流式） |
 | `POST /api/chat/stream` | 发送对话（SSE 流式） |
 | `GET /api/chat/messages` | 会话消息列表 |

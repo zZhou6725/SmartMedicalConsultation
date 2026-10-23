@@ -1,7 +1,7 @@
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { sendChatMessageStream, getSessions, getMessages, deleteSession } from '@/api/chatApi'
+import { sendChatMessageStream, getSessions, getMessages, deleteSession, getSystemStatus } from '@/api/chatApi'
 import {
   ChatDotRound, Plus, OfficeBuilding, FirstAidKit, Reading,
   Refresh, Promotion, WarningFilled, EditPen,Clock, CopyDocument, Delete,
@@ -15,6 +15,31 @@ const inputText = ref('')        // 输入内容
 const sessionId = ref(null)      // 会话id，首次为空，后端 meta 事件返回后保存
 
 const sessions = ref([])         // 会话列表
+
+// —— 系统状态（真实探活，不再是写死的三行绿灯）——
+const sysStatus = ref(null)      // /api/system/status 的 data
+const SERVICES = [
+  { key: 'neo4j', label: 'Neo4j 图谱' },
+  { key: 'vectorIndex', label: '向量索引' },
+  { key: 'agent', label: 'Agent 系统' },
+]
+// connected（连接类）/ ready（就绪类）都算正常
+function svcOk(key) {
+  const s = sysStatus.value?.[key]?.status
+  if (!s) return null
+  return s === 'connected' || s === 'ready'
+}
+const biz = computed(() => sysStatus.value?.business || null)
+
+async function loadStatus() {
+  try {
+    const res = await getSystemStatus()
+    if (res.code === 1) sysStatus.value = res.data
+  } catch (e) {
+    console.error('拉取系统状态失败', e)
+    sysStatus.value = null
+  }
+}
 
 // 滚动到聊天区底部
 function scrollToBottom() {
@@ -55,7 +80,10 @@ function newChat() {
   sessionId.value = null
 }
 
-onMounted(loadSessions)          // 页面加载时拉一次会话列表
+onMounted(() => {                // 页面加载时拉一次会话列表 + 系统状态
+  loadSessions()
+  loadStatus()
+})
 
 // 发送消息：改用 SSE 流式，AI 回复逐字上屏（打字效果）
 async function send() {
@@ -184,10 +212,35 @@ async function deleteChat(sid) {
         <div class="feature"><div class="feature-ico"><span class="alert">!</span></div><div><div class="feature-name">急症识别</div><div class="feature-desc">危险信号即时预警</div></div></div>
 
         <div class="status-panel">
-          <div class="status-title">系统状态 <el-icon class="refresh" :size="14"><Refresh/></el-icon></div>
-          <div class="status-row"><span class="dot on"></span>Neo4j 图谱<span class="ok">正常</span></div>
-          <div class="status-row"><span class="dot on"></span>向量索引<span class="ok">正常</span></div>
-          <div class="status-row"><span class="dot on"></span>Agent 系统<span class="ok">正常</span></div>
+          <div class="status-title">
+            系统状态
+            <el-icon class="refresh" :size="14" @click="loadStatus"><Refresh/></el-icon>
+          </div>
+
+          <!-- 服务状态：来自 /api/system/status 的真实探活 -->
+          <div v-for="s in SERVICES" :key="s.key" class="status-row">
+            <span class="dot" :class="svcOk(s.key) === null ? '' : (svcOk(s.key) ? 'on' : 'off')"></span>
+            {{ s.label }}
+            <span v-if="svcOk(s.key) === null" class="val">—</span>
+            <span v-else-if="svcOk(s.key)" class="ok">正常</span>
+            <span v-else class="bad">异常</span>
+          </div>
+
+          <div class="status-divider"></div>
+          <div class="status-sub">运行数据</div>
+
+          <div class="status-row">
+            <span class="dot on"></span>今日问诊
+            <span class="val">{{ biz ? biz.todaySessions + ' 次' : '—' }}</span>
+          </div>
+          <div class="status-row">
+            <span class="dot on"></span>知识库覆盖
+            <span class="val">{{ biz ? biz.knowledgeEntities + ' 个医疗实体' : '—' }}</span>
+          </div>
+          <div class="status-row">
+            <span class="dot on"></span>平均响应
+            <span class="val">{{ biz ? biz.avgLatencySec + ' s' : '—' }}</span>
+          </div>
         </div>
         <div class="version">v1.0.0 · 仅供参考，请遵医嘱</div>
       </el-aside>
@@ -304,11 +357,17 @@ async function deleteChat(sid) {
 
 .status-panel { margin-top: auto; background: #eef7f5; border: 1px solid #c2e5df; border-radius: 10px; padding: 12px 14px; }
 .status-title { font-size: 13px; color: #909399; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; }
-.status-title .refresh { color: #2f9e8f; }
+.status-title .refresh { color: #2f9e8f; cursor: pointer; }
+.status-title .refresh:hover { color: #155e52; }
 .status-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #303133; padding: 4px 0; }
-.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #d0d7de; }
 .dot.on { background: #2e8b57; }
+.dot.off { background: #f5222d; box-shadow: 0 0 0 3px rgba(245, 34, 45, .12); }
 .status-row .ok { margin-left: auto; background: #d9f2e6; color: #1fb565; border-radius: 999px; padding: 1px 8px; font-size: 12px; font-weight: 600; }
+.status-row .bad { margin-left: auto; background: #fff1f0; color: #cf1322; border-radius: 999px; padding: 1px 8px; font-size: 12px; font-weight: 600; }
+.status-row .val { margin-left: auto; font-size: 12px; color: #2f9e8f; font-weight: 600; }
+.status-divider { height: 1px; background: #c2e5df; margin: 8px 0 6px; }
+.status-sub { font-size: 11px; color: #7fb8a8; margin-bottom: 2px; }
 .version { margin-top: 12px; font-size: 12px; color: #7fb8a8; text-align: center; }
 
 .right { flex: 1; background: #fff; border-radius: 16px; border: 1px solid #e3eeeb; display: flex; flex-direction: column; overflow: hidden; }

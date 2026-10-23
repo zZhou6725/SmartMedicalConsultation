@@ -37,13 +37,10 @@ payload*.json
 tmp*/
 pip-*/
 _wheels*/
-_probe*.json
-_verify*.json
-_regress*.json
-_agent_test.json
-_p34.json
-_check.json
-_out.json
+# 验收/校验用的临时脚本与结果（统一下划线前缀）
+_*.py
+_*.cjs
+_*.json
 
 # 内部文档与脚本（不随仓库公开）
 docs/
