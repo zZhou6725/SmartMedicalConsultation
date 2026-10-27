@@ -13,6 +13,7 @@ import time
 import uuid
 from typing import Any
 
+from app.core.logging import set_trace_id
 from app.store.db import SessionLocal
 from app.store.models import RequestTrace
 
@@ -38,6 +39,8 @@ class Trace:
         self.fallback = False
         self.error = ""
         self._t0 = time.time()
+        # 让本请求期间的所有结构化日志自动带上 trace_id
+        set_trace_id(self.trace_id)
 
     # ---- 采集 ----
 

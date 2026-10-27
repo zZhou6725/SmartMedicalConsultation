@@ -11,9 +11,11 @@
 import time
 
 from fastapi import APIRouter
+from fastapi import Response
 from openai import OpenAI
 
 from app.config import settings
+from app.core.resilience import llm_breaker
 from app.retrieval import vector_store as vs
 from app.store import kg_store, session_store
 from app.store.db import engine
@@ -169,6 +171,37 @@ def health_check():
             "version": MODEL_VERSION,
         },
     }
+
+
+@router.get("/healthz")
+def liveness():
+    """存活探针：只证明「进程还在、事件循环没卡死」。
+
+    刻意不查任何依赖 —— 依赖挂了不代表进程该被重启，
+    否则一次 MySQL 抖动会让 k8s 把所有副本轮流重启一遍（雪崩）。
+    """
+    return {"status": "alive", "service": "smart-medical-consultation"}
+
+
+@router.get("/readyz")
+def readiness(response: Response):
+    """就绪探针：能否真正接客（依赖齐全才 200，否则 503）。
+
+    与 /healthz 的职责区分是企业部署的基本要求：
+    存活探针挂了 → 重启容器；就绪探针挂了 → 摘掉流量、不重启。
+    """
+    checks = {
+        "neo4j": _probe_neo4j().get("status") == "connected",
+        "vectorIndex": _probe_vector().get("status") == "ready",
+        "redis": _probe_redis().get("status") == "connected",
+        "mysql": _probe_mysql().get("status") == "connected",
+        "llm": _probe_llm().get("status") == "connected",
+    }
+    ready = all(checks.values())
+    if not ready:
+        response.status_code = 503
+    return {"status": "ready" if ready else "not_ready", "checks": checks,
+            "breaker": llm_breaker.snapshot()}
 
 
 @router.get("/api/system/status")

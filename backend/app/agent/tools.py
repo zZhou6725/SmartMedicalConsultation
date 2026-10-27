@@ -13,11 +13,11 @@ import json
 from app.config import settings
 from app.retrieval import hybrid
 from app.retrieval.hybrid import VAGUE_ENTITIES
-from app.services.llm import client
+from app.services.llm import create_completion
 from app.store import kg_store
 
 MAX_TOOL_ROUNDS = 2     # 最多几轮工具调用，防止模型无休止查下去
-TOOL_TOP_K = 5          # 单次工具调用的返回条数
+TOOL_TOP_K = settings.TOOL_TOP_K   # 单次工具调用的返回条数（可配）
 
 # 工具清单（OpenAI function calling schema）
 TOOLS = [
@@ -150,7 +150,8 @@ def call_tools(message: str, branch_hint: str = "", history: list | None = None)
     evidence, tool_log, final_text = [], [], ""
 
     for _ in range(MAX_TOOL_ROUNDS):
-        resp = client.chat.completions.create(
+        # 必须走统一入口：裸 client 调用会绕过超时与熔断
+        resp = create_completion(
             model=settings.LLM_MODEL,
             messages=messages,
             tools=TOOLS,

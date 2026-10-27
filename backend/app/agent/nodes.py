@@ -3,6 +3,7 @@
 节点命名统一为 xxx_agent，因为 langgraph 0.0.20 禁止节点名与 state 字段同名。
 """
 from app.agent import tools
+from app.config import settings
 from app.retrieval import hybrid
 from app.services.safety import detect_emergency, safety_fields
 
@@ -113,7 +114,64 @@ def _entity_names() -> tuple:
 # 检索相关性下限：低于此分数的命中视为噪声，不作为症状标签 / 科室依据。
 # 实测依据：真命中 top1 在 0.67 上下，而「喉咙痛」这类图谱未覆盖的问题 top1 只有 0.53；
 # 不加下限就会把「胃痛 / 头痛 / 咳嗽」当成用户描述的症状标签展示出去。
-RELEVANCE_FLOOR = 0.60
+RELEVANCE_FLOOR = settings.RELEVANCE_FLOOR
+
+# ---------- 证据预算：按问题类型挑证据，而不是按顺序砍 ----------
+# 实测教训：朴素截断（保序取前 12 条）会把 HAS_CAUSE / HAS_SYMPTOM 这类
+# 语义最关键的三元组砍掉，留下高分但低价值的「可见于…」列表，
+# 导致模型回答「知识库未列出症状」—— 而事实是图谱里明明有。
+_CORE_RELS = {"HAS_SYMPTOM", "HAS_CAUSE", "HAS_CHECK", "USE_DRUG",
+              "BELONG_DEPARTMENT", "HAS_TABOO", "FIT_CROWD"}
+
+# 问题类型 → 该优先保留的关系
+_FOCUS_RULES = [
+    ("HAS_CAUSE", ("原因", "引起", "导致", "为什么", "怎么会", "病因")),
+    ("HAS_CHECK", ("检查", "查什么", "怎么查", "筛查", "化验")),
+    ("HAS_SYMPTOM", ("症状", "表现", "感觉", "有哪些不适")),
+    ("BELONG_DEPARTMENT", ("挂什么科", "哪个科", "看什么科", "科室")),
+    ("USE_DRUG", ("吃什么药", "用什么药", "药物", "药")),
+]
+
+
+def _relation_focus(message: str) -> str | None:
+    """判断这个问题最该看哪类关系。"""
+    text = message or ""
+    for rel, words in _FOCUS_RULES:
+        if any(w in text for w in words):
+            return rel
+    return None
+
+
+def _select_evidence(evidence: list, message: str, limit: int | None = None) -> list:
+    """在预算内挑出信息量最高的证据，并按重要性排序。
+
+    策略：
+      1. 向量 top2 必留（查询本身最相关的实体，通常是「正主」）；
+      2. 与问题类型匹配的关系（问症状就留 HAS_SYMPTOM，问病因留 HAS_CAUSE…）排最前；
+      3. 其余核心关系（用药/科室/检查/禁忌）次之；
+      4. 最后才轮到高分但低价值的「可见于…」噪声。
+    顺序即优先级 —— 模型对上下文开头更敏感，关键证据放前面命中率更高。
+    """
+    budget = limit if limit is not None else settings.EVIDENCE_MAX_ITEMS
+    if len(evidence) <= budget:
+        return evidence
+
+    focus = _relation_focus(message)
+    head = [i for i, e in enumerate(evidence) if e.get("source") == "vector"][:2]
+    head_set = set(head)
+
+    def priority(idx: int) -> int:
+        e = evidence[idx]
+        rel = (e.get("relation") or e.get("type") or "").upper()
+        if focus and rel == focus:
+            return 0
+        if rel in _CORE_RELS:
+            return 1
+        return 2
+
+    rest = sorted((i for i in range(len(evidence)) if i not in head_set), key=priority)
+    keep = head + rest[: max(0, budget - len(head))]
+    return [evidence[i] for i in keep]
 
 
 def _derive(evidence: list):
@@ -179,6 +237,10 @@ def _medical_agent(state, branch: str):
             evidence = []
 
     symptoms, department = _derive(evidence)
+
+    # 证据预算：按问题类型挑（不是保序砍），详见 _select_evidence。
+    # 回传给前端的 evidence 同时受此约束，避免响应体也跟着膨胀。
+    evidence = _select_evidence(evidence, message)
     public_evidence = [
         {"source": e["source"], "type": e["type"], "content": e["content"]}
         for e in evidence

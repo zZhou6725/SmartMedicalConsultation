@@ -1,0 +1,20 @@
+{
+  "taskId": "eval-20261027183315-11f1",
+  "datasetId": "golden53",
+  "datasetVersion": "2.0.0",
+  "recordedAt": "2026-10-27T18:33:15",
+  "note": "评估基线：CI 门禁的相对比对标尺。由 `python -m app.eval --update-baseline` 生成。更新基线必须先确认本次指标没有回归（门禁 PASSED）。容差见 backend/app/eval/runner.py 的 BASELINE_TOLERANCE：taskSuccessRate ±3.0 个百分点、recallAt5 ±0.05、mrr ±0.05，超出即 BLOCKED 且进程退出码 1。",
+  "metrics": {
+    "taskSuccessRate": 98.84,
+    "disclaimerCoverage": 100.0,
+    "emergencyRecall": 100.0,
+    "emergencyAdviceRate": 100.0,
+    "refuseCompliance": 100.0,
+    "keywordHitRate": 98.65,
+    "recallAt5": 0.973,
+    "mrr": 0.94,
+    "toolCallErrorRate": 0.0,
+    "avgLatencyMs": 3411,
+    "avgJudgeScore": 4.0581
+  }
+}

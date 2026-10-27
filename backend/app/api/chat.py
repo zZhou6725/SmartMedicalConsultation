@@ -11,6 +11,7 @@ P3-5 起叠加急症预警与高危问题约束：命中急症时置顶红色预
 import time
 import uuid  #随机数
 import json
+import logging
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -20,6 +21,8 @@ from app.store.session_store import load_history, load_session, save_turn
 from app.services.safety import risk_rules, safety_fields
 from app.agent.graph import run_agent
 from app.observability.trace import Trace
+
+log = logging.getLogger(__name__)
 # Pydantic，用来定义请求体、自动做参数校验（比如 message 不能为空）
 
 
@@ -103,6 +106,11 @@ def chat(req: ChatRequest):
     history.append({"role": "assistant", "content": reply, "consumeTime": consume, **meta})
     save_turn(sid, history, req.message, reply, consume, meta)   # Redis 热缓存 + MySQL 全量落库
     tr.finish()
+    log.info("chat done", extra={
+        "intent": ev["intent"], "session_id": sid, "latency_ms": consume,
+        "retrieve_ms": tr.retrieve_ms, "generate_ms": tr.generate_ms,
+        "fallback": tr.fallback, "error": gen_err or None,
+    })
 
     return {
         "code": 1,
@@ -180,6 +188,11 @@ async def chat_stream_handler(req: ChatStreamRequest):
                         "consumeTime": consume, **meta})
         save_turn(sid, history, req.message, answer, consume, meta)
         tr.finish()
+        log.info("chat stream done", extra={
+            "intent": ev["intent"], "session_id": sid, "latency_ms": consume,
+            "retrieve_ms": tr.retrieve_ms, "generate_ms": tr.generate_ms,
+            "fallback": tr.fallback, "error": gen_err or None,
+        })
         yield sse({
             "type": "done",
             "traceId": tr.trace_id,

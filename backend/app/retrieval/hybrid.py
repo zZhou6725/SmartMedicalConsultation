@@ -8,6 +8,7 @@
 为什么要两路：向量擅长语义相近，但只知道「哪些实体相关」；图谱知道「实体之间的关系」，
 但需要精确的实体名才能查。先向量找种子、再图谱摊开关系，正好互补。
 """
+from app.config import settings
 from app.retrieval.embeddings import encode
 from app.retrieval import vector_store as vs
 from app.store import kg_store
@@ -25,8 +26,11 @@ VAGUE_ENTITIES = {
 # 词面命中加成：查询里直接出现了实体名，是强于余弦相似度的信号
 LEXICAL_BOOST = 0.15
 
+# 词面命中加成：查询里直接出现了实体名，是强于余弦相似度的信号
+LEXICAL_BOOST = settings.LEXICAL_BOOST
+
 # 同族判定阈值（字符级 Jaccard）
-FAMILY_JACCARD = 0.7
+FAMILY_JACCARD = settings.FAMILY_JACCARD
 
 # 中文医疗口语归一化：同一个概念常有「疼/痛」两种写法
 # （偏头疼 ≡ 偏头痛、神经性头疼 ≡ 神经性偏头痛），不归一化会被当成两个不同实体。
@@ -162,9 +166,29 @@ def build_evidence(query: str, top_k: int = 5) -> list:
     return evidence_from(hybrid_search(query, top_k))
 
 
-def build_context(evidence: list) -> str:
-    """把证据拼成 prompt 里的一段上下文文本。无证据时返回空串。"""
+def build_context(evidence: list, max_items: int | None = None,
+                  max_chars: int | None = None) -> str:
+    """把证据拼成 prompt 里的一段上下文文本。无证据时返回空串。
+
+    带预算（条数 + 字符双上限）：trace 实测过单次问诊灌进 45 条证据，
+    上下文越长越贵越慢，而边际信息量急剧下降。超出预算的部分直接截断，
+    不做「压缩摘要」——那需要再调一次模型，反而更贵。
+    """
     if not evidence:
         return ""
-    lines = [f"{i}. {e['content']}" for i, e in enumerate(evidence, 1)]
+    budget_items = max_items if max_items is not None else settings.EVIDENCE_MAX_ITEMS
+    budget_chars = max_chars if max_chars is not None else settings.EVIDENCE_MAX_CHARS
+
+    lines, used = [], 0
+    for e in evidence[:budget_items]:
+        text = (e.get("content") or "").strip()
+        if not text:
+            continue
+        line = f"{len(lines) + 1}. {text}"
+        if used + len(line) > budget_chars:
+            break
+        lines.append(line)
+        used += len(line)
+    if not lines:
+        return ""
     return "参考资料（来自本地医疗知识库，请只依据以下资料作答）：\n" + "\n".join(lines)

@@ -186,5 +186,86 @@ class TestBaselineGate(unittest.TestCase):
         self.assertFalse(cmp["available"])
 
 
+class TestEvidenceBudget(unittest.TestCase):
+    """证据预算：知识库变大后证据会无限膨胀（实测曾 45 条）。"""
+
+    def test_item_limit(self):
+        from app.retrieval.hybrid import build_context
+        ev = [{"source": "vector", "type": "symptom", "content": "短"} for _ in range(30)]
+        ctx = build_context(ev, max_items=5, max_chars=10_000)
+        # 5 条证据 + 1 行抬头
+        self.assertEqual(ctx.count("\n"), 5)
+
+    def test_char_limit(self):
+        from app.retrieval.hybrid import build_context
+        ev = [{"source": "vector", "type": "symptom", "content": "资" * 100}
+              for _ in range(30)]
+        ctx = build_context(ev, max_items=30, max_chars=300)
+        self.assertLessEqual(len(ctx), 400)   # 抬头 + 不超预算
+
+    def test_empty_evidence(self):
+        from app.retrieval.hybrid import build_context
+        self.assertEqual(build_context([]), "")
+
+
+class TestCircuitBreaker(unittest.TestCase):
+    def test_opens_after_threshold(self):
+        from app.core.resilience import CircuitBreaker, CircuitOpen
+
+        cb = CircuitBreaker("t", threshold=2, cooldown=60)
+
+        def boom():
+            raise RuntimeError("down")
+
+        for _ in range(2):
+            with self.assertRaises(RuntimeError):
+                cb.call(boom)
+        # 第 3 次不再发起真实调用，直接熔断
+        with self.assertRaises(CircuitOpen):
+            cb.call(boom)
+        self.assertEqual(cb.snapshot()["state"], "open")
+
+    def test_success_resets(self):
+        from app.core.resilience import CircuitBreaker
+
+        cb = CircuitBreaker("t2", threshold=3, cooldown=60)
+        with self.assertRaises(RuntimeError):
+            cb.call(lambda: (_ for _ in ()).throw(RuntimeError("x")))
+        self.assertEqual(cb.call(lambda: "ok"), "ok")
+        self.assertEqual(cb.snapshot()["failures"], 0)
+
+    def test_half_open_after_cooldown(self):
+        from app.core.resilience import CircuitBreaker, CircuitOpen
+        import time
+
+        cb = CircuitBreaker("t3", threshold=1, cooldown=0.2)
+        with self.assertRaises(RuntimeError):
+            cb.call(lambda: (_ for _ in ()).throw(RuntimeError("x")))
+        with self.assertRaises(CircuitOpen):
+            cb.call(lambda: "never")
+        time.sleep(0.3)
+        # 冷却结束：放行一次真实调用
+        self.assertEqual(cb.call(lambda: "probe"), "probe")
+
+
+class TestConfigExternalized(unittest.TestCase):
+    """阈值必须来自配置，不能散落成魔法数字。"""
+
+    def test_settings_have_budgets(self):
+        from app.config import settings
+        for name in ("EVIDENCE_MAX_ITEMS", "EVIDENCE_MAX_CHARS", "RELEVANCE_FLOOR",
+                     "LEXICAL_BOOST", "FAMILY_JACCARD", "TOOL_TOP_K",
+                     "LLM_TIMEOUT", "LLM_BREAKER_THRESHOLD"):
+            self.assertTrue(hasattr(settings, name), name)
+
+    def test_modules_read_from_settings(self):
+        from app.config import settings
+        from app.agent import nodes, tools
+        from app.retrieval import hybrid
+        self.assertEqual(nodes.RELEVANCE_FLOOR, settings.RELEVANCE_FLOOR)
+        self.assertEqual(hybrid.LEXICAL_BOOST, settings.LEXICAL_BOOST)
+        self.assertEqual(tools.TOOL_TOP_K, settings.TOOL_TOP_K)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

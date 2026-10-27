@@ -2,6 +2,8 @@
 
 P0-3：项目初始化 + /health 健康检查。
 """
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -13,6 +15,11 @@ from app.api.kg import router as kg_router
 from app.api.eval_api import router as eval_router
 from app.api.trace_api import router as trace_router
 from app.config import settings
+from app.core.logging import setup_logging
+
+# 结构化日志必须在其他模块打日志之前初始化
+setup_logging(settings.LOG_LEVEL, settings.LOG_JSON)
+log = logging.getLogger("app")
 
 app = FastAPI(
     title="智慧问诊 Agent 系统",

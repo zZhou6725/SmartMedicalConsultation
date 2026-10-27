@@ -1,10 +1,31 @@
 """大模型调用：统一封装非流式 + 流式，并支持注入检索上下文（RAG）。"""
+import logging
+
 from openai import OpenAI
 
 from app.config import settings
+from app.core.resilience import CircuitOpen, llm_breaker
+
+log = logging.getLogger(__name__)
 
 # OpenAI 兼容客户端：base_url 指向 DeepSeek（或本地 vLLM）
-client = OpenAI(base_url=settings.LLM_BASE_URL, api_key=settings.LLM_API_KEY)
+# 超时与重试来自配置 —— 没有超时的外部调用会让请求线程无限期挂住。
+client = OpenAI(
+    base_url=settings.LLM_BASE_URL,
+    api_key=settings.LLM_API_KEY,
+    timeout=settings.LLM_TIMEOUT,
+    max_retries=settings.LLM_MAX_RETRIES,
+)
+
+
+def create_completion(**kwargs):
+    """统一补全入口：经熔断器保护（带超时）。
+
+    连续失败达阈值后直接抛 CircuitOpen（快速失败），
+    调用方据此立即给出兜底答复，而不是每个请求都硬等超时。
+    工具选择（agent/tools.py）也必须走这里 —— 绕过它等于绕过超时与熔断。
+    """
+    return llm_breaker.call(client.chat.completions.create, **kwargs)
 
 # 系统提示词：专业、克制、不使用 emoji
 SYSTEM_PROMPT = (
@@ -51,7 +72,7 @@ def chat_once(history: list, user_text: str, context: str = "", rules: str = "",
     kwargs = {}
     if temperature is not None:
         kwargs["temperature"] = temperature
-    resp = client.chat.completions.create(
+    resp = create_completion(
         model=settings.LLM_MODEL,
         messages=build_messages(history, user_text, context, rules),
         **kwargs,
@@ -60,8 +81,11 @@ def chat_once(history: list, user_text: str, context: str = "", rules: str = "",
 
 
 def chat_stream(history: list, user_text: str, context: str = "", rules: str = ""):
-    """流式生成器：逐块 yield 文本，用于 SSE。"""
-    stream = client.chat.completions.create(
+    """流式生成器：逐块 yield 文本，用于 SSE。
+
+    建连阶段走熔断器；一旦开始产出，中途断流由上层（SSE error 事件）处理。
+    """
+    stream = create_completion(
         model=settings.LLM_MODEL,
         messages=build_messages(history, user_text, context, rules),
         stream=True,

@@ -37,6 +37,8 @@ payload*.json
 tmp*/
 pip-*/
 _wheels*/
+# PyTorch 编译缓存（正常落在 TEMP；沙箱改写 TEMP 后会落到工作区）
+torchinductor_*/
 # 验收/校验用的临时脚本与结果（统一下划线前缀）
 _*.py
 _*.cjs
