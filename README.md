@@ -55,6 +55,10 @@ smart-medical-consultation/
 │   └── main.py             # 入口：CORS + 路由挂载
 ├── knowledge/
 │   ├── relation_labels.py  # 关系类型 → 中文说明（建索引与 desc 回填共用）
+│   ├── build_desc.py       # 用图谱已有关系回填节点 desc（不引入外部医学知识）
+│   ├── crawl/              # 知识库采集流水线：爬取 → 解析 → 写入 Neo4j
+│   │   ├── crawl_diseases.py   # 从有来医生疾病库抓结构化字段（限速 1.5s/请求）
+│   │   └── load_graph.py       # 幂等 MERGE 写入 Neo4j（与种子数据共存）
 │   └── index/              # 向量索引构建脚本（产物 .index/.json 不入库，可重建）
 ├── eval/
 │   ├── golden_set.json     # 53 条金标集（入库，版本化）
@@ -65,6 +69,23 @@ smart-medical-consultation/
 ├── docker-compose.yml      # Neo4j(7474/7687) / MySQL(3307) / Redis(6379)
 └── requirements.txt        # 后端锁定依赖
 ```
+
+## 知识库构建（从零重建）
+
+```bash
+# 1. 采集：抓 559 个疾病的结构化字段（挂号科室/相关症状/相关药品/相关疾病…）
+python knowledge/crawl/crawl_diseases.py            # 产物落 data/raw/diseases.json
+# 2. 入库：幂等 MERGE 进 Neo4j，可与原种子数据共存
+python knowledge/crawl/load_graph.py
+# 3. 描述：用关系拼出每个节点的一句话 desc（向量索引与接口 15/16 都用它）
+python knowledge/build_desc.py
+# 4. 索引：BGE-M3 编码 + FAISS 建索引
+python knowledge/index/build_vector_index.py
+```
+
+> 数据来源：[有来医生疾病库](https://www.youlai.cn/dise/)，其 `robots.txt` 仅禁止少量路径，
+> 疾病页允许抓取。只取页面中已结构化的字段，不抓正文自由文本，因此无需 LLM 抽取、结果可复核。
+> 抓取限速 1.5 秒/请求。当前规模：**2489 节点 / 6772 关系**。
 
 ## 接口（已实现）
 
@@ -104,7 +125,7 @@ cd backend
 python main.py               # 服务运行在 http://127.0.0.1:8000
 ```
 
-> 健康检查：`GET http://127.0.0.1:8000/health`
+> 健康检查：`GET http://127.0.0.1:8python.exe knowledge\index\build_vector_index.pypython.exe knowledge\index\build_vector_index.py000/health`
 
 ### 3. 启动前端
 ```bash

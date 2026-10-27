@@ -12,22 +12,76 @@ from app.retrieval.embeddings import encode
 from app.retrieval import vector_store as vs
 from app.store import kg_store
 
-# 取前 N 个向量命中作为图谱扩展种子（全部 47 个都扩展会引入大量噪声）
+# 取前 N 个向量命中作为图谱扩展种子
 SEED_TOP_N = 5
+
+# 空泛实体：度数极高但信息量极低（「药物治疗」挂了 500 个疾病），
+# 任何带「治疗」的提问都会把它们顶上来白占 Top-K 名额，因此不进检索证据。
+VAGUE_ENTITIES = {
+    "药物治疗", "手术治疗", "所有人群", "各年龄段", "成年人", "中老年", "中老年人",
+    "青中年人", "年轻女性", "女性", "男性", "儿童", "老年人", "就医", "医生", "记者",
+}
+
+# 词面命中加成：查询里直接出现了实体名，是强于余弦相似度的信号
+LEXICAL_BOOST = 0.15
+
+# 同族判定阈值（字符级 Jaccard）
+FAMILY_JACCARD = 0.7
+
+
+def _is_family_dup(name: str, kept: list) -> bool:
+    """判断 name 是否与已保留的某个实体属同一族（近义/包含/字符高度重合）。
+
+    知识库扩大后，同一个概念会散成多个近义实体
+    （偏头痛 / 偏头疼 / 一侧的头部疼痛 / 单侧的剧烈头痛），
+    它们会把 Top-K 名额占满，导致真正要的那个排到第 5 名之后。
+    """
+    for k in kept:
+        if name in k or k in name:
+            return True
+        a, b = set(name), set(k)
+        if a and b and len(a & b) / len(a | b) >= FAMILY_JACCARD:
+            return True
+    return False
 
 
 def vector_search(query: str, top_k: int = 10) -> list:
-    """向量语义召回（接口13 的核心逻辑，供混合检索与独立接口共用）。"""
-    hits = vs.search(encode(query), top_k=top_k)
-    return [
-        {
-            "entity": h["meta"].get("entity", ""),
-            "type": (h["meta"].get("type", "") or "").lower(),   # Disease → disease
-            "score": round(h["score"], 4),
-            "content": h["meta"].get("content", ""),
-        }
-        for h in hits
-    ]
+    """向量语义召回（接口13 的核心逻辑）。
+
+    三步后处理（知识库扩到 2000+ 实体后必不可少）：
+      1. 过滤空泛实体（VAGUE_ENTITIES）；
+      2. 词面命中加成 —— 查询里直接出现的实体名加权；
+      3. 同族去重 —— 近义实体只保留排最前的那个，避免霸占名额。
+    候选先多取 3 倍，才有余量做去重。
+    """
+    hits = vs.search(encode(query), top_k=max(top_k * 3, 15))
+    q = query or ""
+
+    scored = []
+    for h in hits:
+        meta = h["meta"]
+        name = meta.get("entity", "")
+        if not name or name in VAGUE_ENTITIES:
+            continue
+        score = float(h["score"]) + (LEXICAL_BOOST if name in q else 0.0)
+        scored.append({
+            "entity": name,
+            "type": (meta.get("type", "") or "").lower(),   # Disease → disease
+            "score": round(score, 4),
+            "content": meta.get("content", ""),
+        })
+
+    scored.sort(key=lambda x: -x["score"])
+
+    out, kept = [], []
+    for r in scored:
+        if _is_family_dup(r["entity"], kept):
+            continue
+        kept.append(r["entity"])
+        out.append(r)
+        if len(out) >= top_k:
+            break
+    return out
 
 
 def graph_expand(seeds: list, top_k: int = 10) -> list:

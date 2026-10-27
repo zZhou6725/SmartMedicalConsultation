@@ -274,6 +274,35 @@ def render_markdown(r: dict) -> str:
     return "\n".join(lines)
 
 
+def _error_item(case: dict, exc: Exception) -> dict:
+    """单条用例执行异常时的占位结果：记为失败并保留原因，不中断整轮评估。
+
+    实测踩过：86 条评估跑到第 51 条时 Neo4j 连接断开，整轮直接报废、
+    一条指标都没留下。评估器必须保证「跑过的部分一定出得来」。
+    """
+    return {
+        "id": case.get("id"),
+        "category": case.get("category"),
+        "question": case.get("question", ""),
+        "answer": f"（评估执行异常：{type(exc).__name__}: {exc}）",
+        "pass": False,
+        "score": 0.0,
+        "latencyMs": 0,
+        "intent": "error",
+        "tools": [],
+        "toolCalls": 0,
+        "toolErrors": 0,
+        "retrieved": [],
+        "recallAt5": None,
+        "mrr": None,
+        "checks": {"disclaimer": False, "no_duplicate_disclaimer": True,
+                   "keyword": None, "emergency_detected": None,
+                   "emergency_advice": None, "refuse": None},
+        "judge": None,
+        "failReasons": [f"执行异常：{type(exc).__name__}"],
+    }
+
+
 def run_eval(dataset_id: str = "golden53", limit: int | None = None,
              use_judge: bool = True, persist: bool = True,
              progress=None) -> dict:
@@ -283,21 +312,34 @@ def run_eval(dataset_id: str = "golden53", limit: int | None = None,
 
     items = []
     for i, case in enumerate(cases, start=1):
-        items.append(evaluate_case(case, use_judge=use_judge))
+        try:
+            item = evaluate_case(case, use_judge=use_judge)
+        except Exception as e:                     # 单条崩了不影响其他用例
+            item = _error_item(case, e)
+        items.append(item)
         if progress:
             progress(i, len(cases), items[-1])
 
     summary = aggregate(items, dataset)
 
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    md_path = REPORT_DIR / f"report_{summary['taskId']}.md"
-    md_path.write_text(render_markdown(summary), encoding="utf-8")
-    summary["reportPath"] = str(md_path)
+    # 报告落盘失败不能吞掉整次评估的结果 —— 指标已经算出来了，
+    # 有权知道结论。主目录不可写（权限/只读环境）时退到 data/raw 下，再不行就只返回内存结果。
+    md_path = json_path = None
+    for out_dir in (REPORT_DIR, BASE_DIR / "data" / "raw" / "reports"):
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            md_path = out_dir / f"report_{summary['taskId']}.md"
+            md_path.write_text(render_markdown(summary), encoding="utf-8")
+            json_path = out_dir / f"report_{summary['taskId']}.json"
+            json_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2),
+                                 encoding="utf-8")
+            break
+        except Exception:
+            md_path = json_path = None
+            continue
 
-    # 同时存一份机器可读的结果，便于后续做基线对比与趋势追踪
-    json_path = REPORT_DIR / f"report_{summary['taskId']}.json"
-    json_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    summary["reportJsonPath"] = str(json_path)
+    summary["reportPath"] = str(md_path) if md_path else None
+    summary["reportJsonPath"] = str(json_path) if json_path else None
 
     if persist:
         from app.store import eval_repo

@@ -50,6 +50,23 @@ def retrieve(message: str, history: list | None = None) -> dict:
     }
 
 
+def _assistant_meta(ev: dict, sf: dict) -> dict:
+    """assistant 消息随消息持久化的结构化字段（Redis 与 MySQL 共用）。
+
+    P4-1 当初只存了 emergency，导致**刷新页面或切回历史会话后症状标签、
+    推荐科室、免责声明全部消失** —— 前端 done 事件有值、历史接口却没有。
+    这些字段一并写进 extra，chat_repo._to_history_row 会自动平铺回消息行，
+    前端无需改动即可复原。
+    """
+    return {
+        "emergency": sf["emergency"],
+        "symptoms": ev["symptoms"],
+        "department": ev["department"],
+        "disclaimer": sf["disclaimer"],
+        "medReminder": sf["medReminder"],
+    }
+
+
 class ChatRequest(BaseModel):
     """请求体：message 必填、sessionId 可省、stream 固定 false。"""
     sessionId: str | None = None   # 会话ID
@@ -72,11 +89,10 @@ def chat(req: ChatRequest):
 
     # 追加并缓存（TTL 24h / 最近12轮）
     consume = int((time.time() - start) * 1000)
+    meta = _assistant_meta(ev, sf)
     history.append({"role": "user", "content": req.message})
-    history.append({"role": "assistant", "content": reply, "consumeTime": consume,
-                    "emergency": sf["emergency"]})   # 历史带急症标记，切换会话可复原红警
-    save_turn(sid, history, req.message, reply, consume,
-              {"emergency": sf["emergency"]})        # Redis 热缓存 + MySQL 全量落库
+    history.append({"role": "assistant", "content": reply, "consumeTime": consume, **meta})
+    save_turn(sid, history, req.message, reply, consume, meta)   # Redis 热缓存 + MySQL 全量落库
 
     return {
         "code": 1,
@@ -137,11 +153,11 @@ async def chat_stream_handler(req: ChatStreamRequest):
             yield sse({"type": "error", "code": 0, "msg": f"调用大模型失败：{e}"})
         consume = int((time.time() - start) * 1000)
         answer = "".join(acc)
+        meta = _assistant_meta(ev, sf)
         history.append({"role": "user", "content": req.message})
-        history.append({"role": "assistant", "content": answer, "consumeTime": consume,
-                        "emergency": sf["emergency"]})
-        save_turn(sid, history, req.message, answer, consume,
-                  {"emergency": sf["emergency"]})    # Redis 热缓存 + MySQL 全量落库
+        history.append({"role": "assistant", "content": answer,
+                        "consumeTime": consume, **meta})
+        save_turn(sid, history, req.message, answer, consume, meta)
         yield sse({
             "type": "done",
             "consumeTime": consume,

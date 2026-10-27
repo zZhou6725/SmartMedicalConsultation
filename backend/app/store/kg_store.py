@@ -8,6 +8,7 @@
   5. 长度限制：语句长度与实体名长度设上限，避免超长输入。
 """
 from neo4j import GraphDatabase
+from neo4j.exceptions import ServiceUnavailable, SessionExpired
 
 from app.config import settings
 
@@ -34,20 +35,48 @@ def get_driver():
         _driver = GraphDatabase.driver(
             settings.NEO4J_URI,
             auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
+            max_connection_lifetime=1800,   # 连接最长存活 30 分钟，避免长期任务里老化
+            connection_acquisition_timeout=30,
         )
     return _driver
 
 
+def reset_driver():
+    """丢弃当前 driver（连接池可能已失效），下次调用会重建。"""
+    global _driver
+    if _driver is not None:
+        try:
+            _driver.close()
+        except Exception:
+            pass
+        _driver = None
+
+
 def run_read(cypher: str, **params) -> list:
-    """只读执行：先做写操作关键词校验与长度校验，再执行并返回 dict 列表。"""
+    """只读执行：先做写操作关键词校验与长度校验，再执行并返回 dict 列表。
+
+    带一次重连重试：长任务（如 80+ 条评估）跑到一半时 Neo4j 连接可能老化，
+    或容器重启导致连接池里的连接全部失效。没有重试的话整轮任务会因为
+    一条死连接而报废 —— 实测踩过（评估跑到第 51 条中断）。
+    """
     if len(cypher) > MAX_CYPHER_LEN:
         raise ValueError(f"只读防护：语句过长（{len(cypher)} > {MAX_CYPHER_LEN}），已拒绝")
     upper = cypher.upper()
     for kw in _WRITE_KEYWORDS:
         if kw in upper:
             raise ValueError(f"只读防护：检测到写操作关键词 {kw!r}，已拒绝")
-    with get_driver().session() as session:
-        return session.run(cypher, **params).data()
+
+    last = None
+    for attempt in (1, 2):
+        try:
+            with get_driver().session() as session:
+                return session.run(cypher, **params).data()
+        except (ServiceUnavailable, SessionExpired) as e:
+            last = e
+            reset_driver()          # 连接池已不可用，重建后再试一次
+            if attempt == 2:
+                break
+    raise last
 
 
 def _check_name(name: str) -> str:

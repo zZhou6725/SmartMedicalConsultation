@@ -16,24 +16,36 @@ REFER_WORDS = ["遵医嘱", "医生", "医师", "药师", "专业", "医院", "�
 EMERGENCY_WORDS = ["120", "急诊", "急救"]
 
 
-def recall_at_k(retrieved: list, expected: list, k: int = 5) -> float | None:
-    """Recall@K：前 K 个召回结果覆盖了期望实体的多少。
+def _alternatives(expected_item: str) -> list:
+    """把一个期望项拆成实体族：『偏头痛|神经性偏头痛』→ 两个候选。"""
+    return [x.strip() for x in str(expected_item).split("|") if x.strip()]
 
+
+def _matches(expected_item: str, retrieved_item: str) -> bool:
+    """期望项（含实体族）是否被某个召回项覆盖。"""
+    text = str(retrieved_item)
+    return any(alt in text for alt in _alternatives(expected_item))
+
+
+def recall_at_k(retrieved: list, expected: list, k: int = 5) -> float | None:
+    """Recall@K：前 K 个召回结果覆盖了多少期望项。
+
+    期望项支持实体族写法（『A|B』），命中任一成员即算该期望项被覆盖。
     expected 为空（如闲聊、图谱未覆盖用例）时返回 None，聚合时跳过。
     """
     if not expected:
         return None
     top = [str(x) for x in retrieved[:k]]
-    hit = sum(1 for e in expected if any(e in t for t in top))
+    hit = sum(1 for e in expected if any(_matches(e, t) for t in top))
     return round(hit / len(expected), 4)
 
 
 def reciprocal_rank(retrieved: list, expected: list) -> float | None:
-    """MRR：第一个命中的期望实体的排名倒数（1/rank）。"""
+    """MRR：第一个覆盖任一期望项的召回结果的排名倒数（1/rank）。"""
     if not expected:
         return None
     for i, item in enumerate(retrieved, start=1):
-        if any(e in str(item) for e in expected):
+        if any(_matches(e, item) for e in expected):
             return round(1 / i, 4)
     return 0.0
 

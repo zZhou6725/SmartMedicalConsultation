@@ -86,11 +86,12 @@ TOOL_SYSTEM_PROMPT = (
 # ---------------- 工具执行体 ----------------
 
 def _exec_vector_search(query: str) -> list:
-    """向量语义检索。"""
+    """向量语义检索。带上相似度分数 —— 上层据此判断命中是否可靠、能不能当症状标签。"""
     results = hybrid.vector_search(query, top_k=TOOL_TOP_K)
     return [
         {"source": "vector", "type": r["type"], "content": r["content"],
-         "entity": r["entity"], "relation": "", "target": ""}
+         "entity": r["entity"], "relation": "", "target": "",
+         "score": r.get("score")}
         for r in results
     ]
 

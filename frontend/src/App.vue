@@ -389,7 +389,8 @@ async function deleteChat(sid) {
 .ai-body { flex: 1; display: flex; flex-direction: column; }
 .card { width: 100%; background: #fff; border: 1px solid #ebeef5; border-left: 4px solid #1fc0a5; border-radius: 12px; padding: 16px 18px; box-sizing: border-box; }
 .card-title { font-size: 12px; color: #155e52; letter-spacing: .5px; margin-bottom: 10px; }
-.card-text { font-size: 14px; color: #303133; line-height: 1.7; margin-bottom: 12px; }
+/* white-space: pre-wrap —— 保留模型输出里的换行，否则 6 条要点会被折叠成一整段 */
+.card-text { font-size: 14px; color: #303133; line-height: 1.7; margin-bottom: 12px; white-space: pre-wrap; word-break: break-word; }
 .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .row .label { font-size: 12px; color: #155e52; }
 .row .dept { background: #eef7f5; border-color: #2f9e8f; color: #2f9e8f; }

@@ -16,6 +16,7 @@ REL_CN = {
     "HAS_CAUSE": "病因", "HAS_CURE": "疗法", "HAS_TABOO": "禁忌",
     "FIT_CROWD": "适用人群", "USE_DRUG": "常用药物", "DRUG_SUIT": "适应症",
     "DRUG_SIDE_EFFECT": "副作用", "DRUG_TABOO_CROWD": "禁忌人群", "DRUG_INTERACT": "相互作用",
+    "HAS_CHECK": "相关检查",
 }
 
 REV_CN = {
@@ -31,4 +32,5 @@ REV_CN = {
     "DRUG_SIDE_EFFECT": "作为副作用见于",
     "DRUG_TABOO_CROWD": "禁忌人群见于",
     "DRUG_INTERACT": "与以下药物存在相互作用：",
+    "HAS_CHECK": "可作为其检查手段见于",
 }

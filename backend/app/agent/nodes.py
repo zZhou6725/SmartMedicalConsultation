@@ -47,7 +47,7 @@ BRANCH_HINTS = {
 
 
 def classify_intent(message: str) -> str:
-    """意图识别：急症优先，其次确定性关键词规则（按优先级取第一个命中）。
+    """意图识别：急症优先 → 关键词规则 → 图谱实体名兜底 → general。
 
     为什么用规则而不是让大模型分类：意图决定**控制流**（走哪条分支），
     可控性与可测试性优先；模型的不确定性留给更需要判断力的工具选择环节。
@@ -62,6 +62,13 @@ def classify_intent(message: str) -> str:
     for intent, keywords in INTENT_RULES:
         if any(k in text for k in keywords):
             return intent
+
+    # 实体兜底：问题里直接出现图谱实体名（如「我高血压」「布洛芬怎么样」），
+    # 说明这是医疗问题，绝不能落到 general —— 那条分支既不检索、也不受
+    # grounded 约束，模型会凭参数记忆自由作答（这是幻觉入口）。
+    if any(name in text for name in _entity_names()):
+        return "knowledge"
+
     return "general"
 
 
@@ -77,19 +84,60 @@ def _dedup(items: list) -> list:
     return out
 
 
-def _derive(evidence: list):
-    """从证据推症状标签与推荐科室（与 P3-3 同一套口径）。
+# ---------------- 图谱实体名兜底 ----------------
 
-    symptoms：证据中类型为 symptom 的实体名。这里**不能只看 vector 源** ——
-    向量命中与图谱搜索可能返回同样的描述文本，去重后只保留先出现的那条，
-    若先出现的是 kg 源就会漏掉；按实体类型判断才是稳的。
+# 用可变容器做缓存：查询失败时不写缓存，下次还能重试（lru_cache 会把失败也缓存住）
+_ENTITY_CACHE = {"names": ()}
 
-    department：图谱证据里 BELONG_DEPARTMENT 关系的终点。
+
+def _entity_names() -> tuple:
+    """图谱里的全部实体名，供意图识别做兜底匹配。
+
+    「我高血压」「布洛芬怎么样」这类问法不含任何意图关键词，
+    但实体名一定在图谱里 —— 用它兜底比不断往关键词表里加词更可维护。
     """
+    if _ENTITY_CACHE["names"]:
+        return _ENTITY_CACHE["names"]
+    try:
+        from app.store import kg_store
+
+        rows = kg_store.run_read(
+            "MATCH (n) WHERE n.name IS NOT NULL RETURN n.name AS name"
+        )
+        _ENTITY_CACHE["names"] = tuple(r["name"] for r in rows if r.get("name"))
+    except Exception:
+        return ()
+    return _ENTITY_CACHE["names"]
+
+
+# 检索相关性下限：低于此分数的命中视为噪声，不作为症状标签 / 科室依据。
+# 实测依据：真命中 top1 在 0.67 上下，而「喉咙痛」这类图谱未覆盖的问题 top1 只有 0.53；
+# 不加下限就会把「胃痛 / 头痛 / 咳嗽」当成用户描述的症状标签展示出去。
+RELEVANCE_FLOOR = 0.60
+
+
+def _derive(evidence: list):
+    """从证据推症状标签与推荐科室。
+
+    symptoms：类型为 symptom 且分数达标的实体名。
+    department：优先取图谱 BELONG_DEPARTMENT 关系的终点；没有退而取向量命中的科室实体。
+
+    整体分数不达标时直接返回空 —— 宁可少显示，也不能显示错。
+    """
+    scores = [e["score"] for e in evidence if e.get("score") is not None]
+    if scores and max(scores) < RELEVANCE_FLOOR:
+        return [], ""
+
     symptoms = [e.get("entity", "") for e in evidence
-                if e.get("type") == "symptom" and e.get("entity")]
+                if e.get("type") == "symptom" and e.get("entity")
+                and (e.get("score") is None or e["score"] >= RELEVANCE_FLOOR)]
+
     department = next((e.get("target", "") for e in evidence
                        if e.get("relation") == "BELONG_DEPARTMENT"), "")
+    if not department:
+        department = next((e.get("entity", "") for e in evidence
+                           if e.get("type") == "department" and e.get("entity")
+                           and (e.get("score") or 0) >= RELEVANCE_FLOOR), "")
     return symptoms[:3], department
 
 
@@ -101,7 +149,8 @@ def _fallback_items(message: str) -> list:
     data = hybrid.hybrid_search(message, tools.TOOL_TOP_K)
     items = [
         {"source": "vector", "type": r["type"], "content": r["content"],
-         "entity": r["entity"], "relation": "", "target": ""}
+         "entity": r["entity"], "relation": "", "target": "",
+         "score": r.get("score")}
         for r in data["vectorResults"]
     ]
     items += [

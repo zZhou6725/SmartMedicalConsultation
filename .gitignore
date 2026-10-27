@@ -41,6 +41,7 @@ _wheels*/
 _*.py
 _*.cjs
 _*.json
+_*.log
 
 # 内部文档与脚本（不随仓库公开）
 docs/
