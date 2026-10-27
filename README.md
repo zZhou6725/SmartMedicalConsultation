@@ -41,7 +41,9 @@
 - **自动化评估门禁**：86 条金标集分 9 类（急症 / 科室 / 用药 / 症状 / 知识 / 检查 / 拒答 / 超范围 / 闲聊），四层评估 —— 硬规则（免责声明覆盖率、急症召回率、拒答合规率）**一票否决** + 关键词命中 + 检索 Recall@5/MRR + LLM 裁判；产出 Markdown 评测报告（含失败用例 trace）并回写 `eval_record` 表
 - **相对基线门禁（CI 门禁第二层）**：绝对阈值只能兜住「明显坏了」，指标从 0.97 静悄悄掉到 0.85 它不会吭声。因此把上一版结果存为 `baseline.json`，逐项比对跌幅（任务成功率 ±3pt / Recall@5 ±0.05 / MRR ±0.05），超容差即 `gate=BLOCKED` 且进程退出码 1 —— 可直接接 CI 流水线阻断合并
 - **可观测性（请求级 trace）**：每次对话落一条链路 —— 意图、工具调用及成败、召回实体、编排耗时 / 生成耗时 / 总耗时、是否走了降级；`GET /api/trace/{traceId}` 可回放单次请求，`/api/trace/stats` 给请求量、降级率、分阶段平均耗时
-- **单元测试**：25 个纯逻辑用例（标准库 unittest，无额外依赖），覆盖指标判定、急症/高危识别（含反例）、意图路由、相关性下限、同族去重、基线门禁；`cd backend && python -m unittest discover -s tests`
+- **单元测试**：39 个纯逻辑用例（标准库 unittest，无额外依赖），覆盖指标判定、急症/高危识别（含反例）、意图路由、相关性下限、同族去重、基线门禁、证据预算、熔断器、鉴权规则；`cd backend && python -m unittest discover -s tests`
+- **鉴权（最小可用）**：管理类接口（评估/图谱/链路）要求 `X-Admin-Token`，`ADMIN_TOKEN` 未配置时**只放行本机**（默认安全）；会话读写要求服务端签发的 `X-Session-Key`，杜绝"知道 sessionId 就能读别人问诊记录"
+- **限流**：Nginx 按 IP 限速（对话 10 次/分钟、其它 120 次/分钟），后端 8000 端口只绑 `127.0.0.1`，对外必须走网关
 
 ## 目录结构
 
@@ -67,9 +69,11 @@ smart-medical-consultation/
 │   ├── golden_set.json     # 53 条金标集（入库，版本化）
 │   └── reports/            # 评测报告产物（不入库，可重建）
 
-├── frontend/               # Vue3 + Vite + Element Plus
+├── frontend/               # Vue3 + Vite + Element Plus（Dockerfile + nginx.conf 供容器部署）
 │   └── src/{api,utils}/    # 接口集中管理 + axios 统一请求封装
-├── docker-compose.yml      # Neo4j(7474/7687) / MySQL(3307) / Redis(6379)
+├── docker-compose.yml      # 全栈编排：neo4j(7474/7687) mysql(3307) redis(6379) backend(8000) web(8080)
+├── backend/Dockerfile      # 后端镜像（构建上下文=仓库根，因 requirements.txt 在根）
+├── DEPLOY.md               # 部署与运维手册（启动顺序/验证清单/故障排查/备份）
 └── requirements.txt        # 后端锁定依赖
 ```
 
@@ -131,7 +135,8 @@ cd backend
 python main.py               # 服务运行在 http://127.0.0.1:8000
 ```
 
-> 健康检查：`GET http://127.0.0.1:8python.exe knowledge\index\build_vector_index.pypython.exe knowledge\index\build_vector_index.py000/health`
+> 探针：`GET /healthz`（进程存活，不查依赖）、`GET /readyz`（依赖全通才 200）、
+> `GET /api/system/status`（各组件详情 + 业务指标）
 
 ### 3. 启动前端
 ```bash
@@ -139,6 +144,17 @@ cd frontend
 npm install
 npm run dev                  # 运行在 http://localhost:5173
 ```
+
+### 4. 全栈容器部署（可选）
+
+除本机开发外，也可整站容器化一条命令拉起（前端 Nginx + 后端 + 三个中间件，按健康检查编排启动顺序）：
+
+```bash
+python knowledge/index/build_vector_index.py   # 索引不入库，必须先构建
+docker compose up -d --build                    # 访问 http://localhost:8080
+```
+
+详细步骤、验证清单、故障排查、备份与运维要点见 **[DEPLOY.md](DEPLOY.md)**。
 
 ## 里程碑
 

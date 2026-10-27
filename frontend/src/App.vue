@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { sendChatMessageStream, getSessions, getMessages, deleteSession, getSystemStatus } from '@/api/chatApi'
+import { saveSessionKey, removeSessionKey } from '@/utils/sessionKeys'
 import {
   ChatDotRound, Plus, OfficeBuilding, FirstAidKit, Reading,
   Refresh, Promotion, WarningFilled, EditPen,Clock, CopyDocument, Delete,
@@ -115,6 +116,8 @@ async function send() {
         const data = JSON.parse(line.slice(6))
         if (data.type === 'meta') {
           sessionId.value = data.sessionId    // 从 meta 里拿并保存
+          // 服务端签发/回显的会话能力令牌：必须持久化，否则刷新后读不到自己的历史
+          if (data.sessionKey) saveSessionKey(data.sessionId, data.sessionKey)
         } else if (data.type === 'emergency') {
           // 急症预警会先于正文到达：立刻渲染红卡，不等待 8 秒的检索与生成
           aiMsg.emergency = { hit: data.hit, keywords: data.keywords, message: data.message }
@@ -168,6 +171,7 @@ async function deleteChat(sid) {
   }
   try {
     await deleteSession(sid)
+    removeSessionKey(sid)                     // 会话已删，本地令牌一并清掉
     ElMessage.success('已删除')
     if (sid === sessionId.value) newChat()   // 删的是当前会话 → 清空聊天区
     loadSessions()                           // 刷新列表

@@ -4,8 +4,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# 项目根目录（backend/app/config.py 向上两级 = D:\Python-ai\Project\SmartMedicalConsultation）
-BASE_DIR = Path(__file__).resolve().parents[2]
+# 项目根目录（backend/app/config.py 向上两级 = 仓库根）
+# 容器里层级不同（/app/app/config.py 会算成 /），所以支持 PROJECT_ROOT 显式覆盖。
+BASE_DIR = Path(os.getenv("PROJECT_ROOT") or Path(__file__).resolve().parents[2])
 load_dotenv(BASE_DIR / ".env")
 
 
@@ -43,6 +44,10 @@ class Settings:
     # 向量模型
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
     EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "1024"))
+    # 只用本地已下载的模型（本机开发默认 1：没下载就直接报错，不去联网干等）。
+    # 容器首次启动置 0，允许下载进 hf-cache 卷，之后复用。
+    EMBEDDING_LOCAL_ONLY: bool = os.getenv(
+        "EMBEDDING_LOCAL_ONLY", "1").lower() not in ("0", "false", "no")
 
     # ---------------- 检索与生成预算（可调，改 .env 即生效）----------------
     # 证据预算：trace 实测一次问诊曾灌进 45 条证据，token 成本与延迟随之膨胀。
@@ -70,6 +75,11 @@ class Settings:
     # ---------------- 日志 ----------------
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_JSON: bool = os.getenv("LOG_JSON", "1").lower() not in ("0", "false", "no")
+
+    # ---------------- 安全 ----------------
+    # 管理类接口（评估/图谱/链路追踪）的访问令牌，请求头 X-Admin-Token。
+    # 留空 = 只允许本机访问（开发默认）；一旦对外提供服务必须设置。
+    ADMIN_TOKEN: str = os.getenv("ADMIN_TOKEN", "")
 
 
 settings = Settings()

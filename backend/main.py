@@ -4,7 +4,7 @@ P0-3：项目初始化 + /health 健康检查。
 """
 import logging
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.system import router as system_router
@@ -15,6 +15,7 @@ from app.api.kg import router as kg_router
 from app.api.eval_api import router as eval_router
 from app.api.trace_api import router as trace_router
 from app.config import settings
+from app.core.auth import require_admin
 from app.core.logging import setup_logging
 
 # 结构化日志必须在其他模块打日志之前初始化
@@ -37,13 +38,17 @@ app.add_middleware(
 )
 
 # 挂载路由
+# 公开：健康探针、系统状态、对话、会话、混合检索（前端直接使用）
 app.include_router(system_router)
 app.include_router(chat_router)
 app.include_router(sessions_router)
 app.include_router(search_router)
-app.include_router(kg_router)
-app.include_router(eval_router)
-app.include_router(trace_router)
+
+# 管理类：评估（烧 token）、图谱（可看全库）、链路追踪（含 question 原文）
+# → 统一要求 X-Admin-Token；未配置令牌时仅允许本机访问
+app.include_router(kg_router, dependencies=[Depends(require_admin)])
+app.include_router(eval_router, dependencies=[Depends(require_admin)])
+app.include_router(trace_router, dependencies=[Depends(require_admin)])
 
 
 @app.on_event("startup")

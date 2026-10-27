@@ -41,3 +41,30 @@ def ensure_schema():
             conn.exec_driver_sql(
                 "ALTER TABLE chat_message ADD COLUMN extra JSON NULL COMMENT '消息附加信息（如急症预警）'"
             )
+
+        # 会话能力令牌（鉴权用）：老数据没有这一列，补列后再回填随机值，
+        # 否则历史会话会变成"任何人凭 sessionId 都能读"的裸奔状态。
+        sess_cols = {row[0] for row in conn.exec_driver_sql("SHOW COLUMNS FROM chat_session")}
+        if "session_key" not in sess_cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE chat_session ADD COLUMN session_key VARCHAR(64) NULL COMMENT '会话能力令牌'"
+            )
+            conn.exec_driver_sql("CREATE INDEX idx_session_key ON chat_session (session_key)")
+
+    _backfill_session_keys()
+
+
+def _backfill_session_keys() -> int:
+    """给没有令牌的历史会话补发令牌（幂等）。"""
+    import secrets
+
+    with engine.begin() as conn:
+        rows = conn.exec_driver_sql(
+            "SELECT session_id FROM chat_session WHERE session_key IS NULL OR session_key = ''"
+        ).fetchall()
+        for (sid,) in rows:
+            conn.exec_driver_sql(
+                "UPDATE chat_session SET session_key = %s WHERE session_id = %s",
+                (secrets.token_urlsafe(24), sid),
+            )
+    return len(rows)

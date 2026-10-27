@@ -13,10 +13,12 @@ import uuid  #随机数
 import json
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
+from app.core.auth import new_session_key, session_key_ok
 from app.services.llm import chat_once, chat_stream as llm_stream
+from app.store import chat_repo
 from app.store.session_store import load_history, load_session, save_turn
 from app.services.safety import risk_rules, safety_fields
 from app.agent.graph import run_agent
@@ -71,6 +73,25 @@ def _assistant_meta(ev: dict, sf: dict) -> dict:
     }
 
 
+def _resolve_session(session_id: str | None, provided_key: str | None,
+                     first_text: str) -> tuple[str, str]:
+    """解析会话并校验归属，返回 (session_id, session_key)。
+
+    存储不可用时降级为不校验（宁可放开也不能让对话不可用），
+    但此时令牌只出现在本次响应里、不落库，重启后该会话对客户端不可恢复。
+    """
+    try:
+        sid, key, _ = chat_repo.get_or_create_session(session_id, provided_key, first_text)
+        return sid, key
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        log.warning("会话归属校验跳过（存储不可用）", exc_info=True)
+        return session_id or str(uuid.uuid4()), provided_key or new_session_key()
+
+
 class ChatRequest(BaseModel):
     """请求体：message 必填、sessionId 可省、stream 固定 false。"""
     sessionId: str | None = None   # 会话ID
@@ -78,9 +99,9 @@ class ChatRequest(BaseModel):
     stream: bool = False  # 本接口固定非流式
 
 @router.post("/api/chat")
-def chat(req: ChatRequest):
+def chat(req: ChatRequest, x_session_key: str | None = Header(default=None, alias="X-Session-Key")):
     start = time.time()
-    sid = req.sessionId or str(uuid.uuid4())   #没传 sessionId 就生成一个
+    sid, skey = _resolve_session(req.sessionId, x_session_key, req.message)
     mid = f"msg-{int(time.time() * 1000)}"
     tr = Trace(req.message, sid)               # 链路追踪（best-effort 落库）
 
@@ -117,6 +138,7 @@ def chat(req: ChatRequest):
         "msg": "success",
         "data": {
             "sessionId": sid,
+            "sessionKey": skey,
             "messageId": mid,
             "traceId": tr.trace_id,
             "reply": reply,
@@ -145,16 +167,18 @@ def sse(data: dict) -> str:
 
 
 @router.post("/api/chat/stream")
-async def chat_stream_handler(req: ChatStreamRequest):
-    sid = req.sessionId or str(uuid.uuid4())
+async def chat_stream_handler(
+        req: ChatStreamRequest,
+        x_session_key: str | None = Header(default=None, alias="X-Session-Key")):
+    sid, skey = _resolve_session(req.sessionId, x_session_key, req.message)
     mid = f"msg-{int(time.time() * 1000)}"
     history = load_session(sid)
     tr = Trace(req.message, sid)               # 链路追踪（best-effort 落库）
 
     def generator():
         start = time.time()
-        yield sse({"type": "meta", "sessionId": sid, "messageId": mid,
-                   "traceId": tr.trace_id})
+        yield sse({"type": "meta", "sessionId": sid, "sessionKey": skey,
+                   "messageId": mid, "traceId": tr.trace_id})
 
         # 安全层是纯规则、微秒级，先算先发：
         # 急症警示必须第一个到达前端——等编排+工具调用+生成跑完再提示「快打 120」，
@@ -195,6 +219,8 @@ async def chat_stream_handler(req: ChatStreamRequest):
         })
         yield sse({
             "type": "done",
+            "sessionId": sid,
+            "sessionKey": skey,
             "traceId": tr.trace_id,
             "consumeTime": consume,
             "symptoms": ev["symptoms"],
@@ -209,7 +235,18 @@ async def chat_stream_handler(req: ChatStreamRequest):
     return StreamingResponse(generator(), media_type="text/event-stream")
 
 @router.get("/api/chat/messages")
-def get_messages(sessionId: str):
-    """会话消息列表（历史复原）：走 MySQL 全量，Redis 兜底。"""
+def get_messages(sessionId: str,
+                 x_session_key: str | None = Header(default=None, alias="X-Session-Key")):
+    """会话消息列表（历史复原）：走 MySQL 全量，Redis 兜底。
+
+    必须校验会话令牌 —— 否则任何知道 sessionId 的人都能读到别人的全部问诊记录。
+    """
+    try:
+        expected = chat_repo.get_session_key(sessionId)
+    except Exception:
+        expected = None                       # 存储不可用时按历史数据不设防处理
+    if not session_key_ok(expected, x_session_key):
+        raise HTTPException(status_code=403, detail="会话令牌无效，无法读取该会话")
+
     msgs = load_history(sessionId)
     return {"code": 1, "msg": "success", "data": {"total": len(msgs), "rows": msgs}}

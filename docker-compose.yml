@@ -1,15 +1,32 @@
+# 智慧问诊 Agent 系统 —— 全栈编排
+#
+# 启动顺序由健康检查驱动（不是靠 sleep 猜）：
+#   neo4j/mysql/redis healthy → backend ready（/readyz）→ web（nginx）
+#
+# 首次启动前请确认：
+#   1. 已执行过 `python knowledge/index/build_vector_index.py` 生成向量索引
+#      （knowledge/index/ 在 .gitignore 中，所以用数据卷挂载，不打进镜像）
+#   2. .env 里已填 LLM_API_KEY
+#
+# 用例：
+#   docker compose up -d --build      # 全栈启动
+#   docker compose ps                 # 看各容器健康状态
+#   docker compose logs -f backend     # 跟后端结构化日志（JSON）
+#   docker compose down               # 停止（保留数据卷）
+
 services:
-  # 医疗知识图谱数据库
+  # ---------------- 知识图谱 ----------------
   neo4j:
     image: neo4j:5.26
     container_name: medical-neo4j
     ports:
-      - "7474:7474"  # 可视化页面端口
-      - "7687:7687"  # 程序连接端口
+      - "7474:7474"  # 浏览器可视化
+      - "7687:7687"  # bolt 协议
     environment:
-      NEO4J_AUTH: neo4j/123456  # 账号密码（开发固定）
-      NEO4J_dbms_security_auth__minimum__password__length: "6"  # Neo4j 5.x 默认要求密码≥8位，这里放行 6 位（123456）
-      NEO4J_PLUGINS: '["apoc"]'   # 开启 APOC 插件，支持图谱批量操作
+      NEO4J_AUTH: neo4j/123456
+      # Neo4j 5.x 默认要求密码 ≥8 位，这里放行 6 位开发密码
+      NEO4J_dbms_security_auth__minimum__password__length: "6"
+      NEO4J_PLUGINS: '["apoc"]'
     volumes:
       - neo4j-data:/data
       - neo4j-logs:/logs
@@ -20,12 +37,12 @@ services:
       retries: 5
     restart: always
 
-  # 业务持久化数据库（官方镜像默认 utf8mb4，这里用启动参数显式指定）
+  # ---------------- 业务库 ----------------
   mysql:
     image: mysql:8.0
     container_name: medical-mysql
     ports:
-      - "3307:3306"  # 本机 3306 被本地 MySQL 服务占用，容器映射到 3307
+      - "3307:3306"  # 本机 3306 被占用，宿主机映射到 3307
     environment:
       MYSQL_ROOT_PASSWORD: 123456
       MYSQL_DATABASE: medical_consult
@@ -39,7 +56,7 @@ services:
       retries: 10
     restart: always
 
-  # 会话缓存中间件
+  # ---------------- 会话缓存 ----------------
   redis:
     image: redis:7-alpine
     container_name: medical-redis
@@ -54,8 +71,75 @@ services:
       retries: 5
     restart: always
 
+  # ---------------- 后端：FastAPI + Agent + 检索 ----------------
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: medical-backend
+    env_file:
+      - .env
+    environment:
+      # 容器内服务名即主机名（覆盖 .env 里的 localhost）
+      NEO4J_URI: bolt://neo4j:7687
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      REDIS_HOST: redis
+      # 镜像里项目根在 /app，索引由下方 volume 挂进来
+      PROJECT_ROOT: /app
+      LOG_JSON: "1"
+      # 容器首次启动时允许下载 BGE-M3（约 2.2G，落在 hf-cache 卷里复用）
+      EMBEDDING_LOCAL_ONLY: "0"
+    volumes:
+      # 向量索引：不在 git 里，必须挂载（只读）
+      - ./knowledge/index:/app/knowledge/index:ro
+      # 模型缓存：持久化，避免每次重建都重新下载 2.2G
+      - hf-cache:/root/.cache/huggingface
+    ports:
+      # 只绑定本机回环：调试用，不对外暴露。
+      # 对外只走 web(8080) 的 Nginx —— 否则用户可以绕过 Nginx 的限流直连后端。
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # 用 /readyz（依赖全通才算就绪），比 /healthz 更能反映"能否接客"
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/readyz || exit 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 90s
+      retries: 8
+    restart: always
+
+  # ---------------- 前端：Nginx 托管 + 反代 ----------------
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: medical-web
+    ports:
+      - "8080:80"     # 访问入口：http://localhost:8080
+    # 启用 HTTPS 时取消下面两行注释，并在 frontend/nginx.conf 打开 443 块
+    #   - "8443:443"
+    # volumes:
+    #   - ./frontend/certs:/etc/nginx/certs:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: always
+
 volumes:
   neo4j-data:
   neo4j-logs:
   mysql-data:
   redis-data:
+  hf-cache:

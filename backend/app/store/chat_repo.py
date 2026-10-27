@@ -8,6 +8,7 @@
 """
 from sqlalchemy import delete, select
 
+from app.core.auth import new_session_key, session_key_ok
 from app.store.db import SessionLocal
 from app.store.models import ChatMessage, ChatSession
 
@@ -17,6 +18,50 @@ MAX_TITLE = 30
 def _title_of(text: str) -> str:
     """会话标题取首次提问的前 30 字。"""
     return (text or "新对话").strip()[:MAX_TITLE] or "新对话"
+
+
+def get_or_create_session(session_id: str | None, provided_key: str | None,
+                          first_text: str) -> tuple[str, str, bool]:
+    """确保会话存在，并校验归属。返回 (session_id, session_key, 是否新建)。
+
+    - 新会话：签发 capability token；
+    - 已有会话：令牌必须匹配，否则抛 PermissionError（防止凭 sessionId 读别人历史）；
+    - 历史数据缺令牌：补发一个并发给本次调用方（仅发生在首次访问该旧会话时）。
+    """
+    import uuid
+
+    sid = session_id or str(uuid.uuid4())
+    with SessionLocal() as db:
+        sess = db.execute(
+            select(ChatSession).where(ChatSession.session_id == sid)
+        ).scalar_one_or_none()
+
+        if sess is None:
+            key = new_session_key()
+            db.add(ChatSession(session_id=sid, title=_title_of(first_text),
+                               session_key=key))
+            db.commit()
+            return sid, key, True
+
+        key = sess.session_key or ""
+        if not key:                                  # 旧数据补发
+            key = new_session_key()
+            sess.session_key = key
+            db.commit()
+            return sid, key, False
+
+        if not session_key_ok(key, provided_key):
+            raise PermissionError("会话令牌无效，无法访问该会话")
+        return sid, key, False
+
+
+def get_session_key(session_id: str) -> str | None:
+    """取会话令牌（不存在返回 None）。"""
+    with SessionLocal() as db:
+        key = db.execute(
+            select(ChatSession.session_key).where(ChatSession.session_id == session_id)
+        ).scalar_one_or_none()
+    return key
 
 
 def _to_history_row(msg: ChatMessage) -> dict:
@@ -75,6 +120,9 @@ def list_sessions(limit: int = 50) -> list:
         out.append({
             "sessionId": s.session_id,
             "title": s.title or "新对话",
+            # 令牌一并返回：调用方本来就必须持有它才能看到这条记录，
+            # 客户端靠它把自己的会话列表筛出来（服务端不做"猜你想看"）。
+            "sessionKey": s.session_key or "",
             "createTime": int(s.create_time.timestamp() * 1000) if s.create_time else 0,
             "updateTime": int(s.update_time.timestamp() * 1000) if s.update_time else 0,
         })

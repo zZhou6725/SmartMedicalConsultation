@@ -255,7 +255,7 @@ class TestConfigExternalized(unittest.TestCase):
         from app.config import settings
         for name in ("EVIDENCE_MAX_ITEMS", "EVIDENCE_MAX_CHARS", "RELEVANCE_FLOOR",
                      "LEXICAL_BOOST", "FAMILY_JACCARD", "TOOL_TOP_K",
-                     "LLM_TIMEOUT", "LLM_BREAKER_THRESHOLD"):
+                     "LLM_TIMEOUT", "LLM_BREAKER_THRESHOLD", "ADMIN_TOKEN"):
             self.assertTrue(hasattr(settings, name), name)
 
     def test_modules_read_from_settings(self):
@@ -265,6 +265,51 @@ class TestConfigExternalized(unittest.TestCase):
         self.assertEqual(nodes.RELEVANCE_FLOOR, settings.RELEVANCE_FLOOR)
         self.assertEqual(hybrid.LEXICAL_BOOST, settings.LEXICAL_BOOST)
         self.assertEqual(tools.TOOL_TOP_K, settings.TOOL_TOP_K)
+
+
+class TestAdminAuth(unittest.TestCase):
+    """管理接口鉴权：默认必须"关"，而不是默认放行。"""
+
+    def test_configured_token(self):
+        from app.core.auth import admin_allowed
+        self.assertTrue(admin_allowed("s3cret", "s3cret", False)[0])
+        self.assertFalse(admin_allowed("wrong", "s3cret", False)[0])
+        self.assertFalse(admin_allowed(None, "s3cret", False)[0])
+
+    def test_unconfigured_allows_local_only(self):
+        from app.core.auth import admin_allowed
+        self.assertTrue(admin_allowed(None, "", True)[0])
+        # 关键：未配置令牌时不能对远端放行，否则等于没有鉴权
+        self.assertFalse(admin_allowed(None, "", False)[0])
+        self.assertFalse(admin_allowed("anything", "", False)[0])
+
+    def test_reason_is_explained(self):
+        from app.core.auth import admin_allowed
+        ok, reason = admin_allowed(None, "", False)
+        self.assertFalse(ok)
+        self.assertIn("ADMIN_TOKEN", reason)
+
+
+class TestSessionKey(unittest.TestCase):
+    """会话令牌：防止凭 sessionId 读别人的问诊记录。"""
+
+    def test_match(self):
+        from app.core.auth import session_key_ok
+        self.assertTrue(session_key_ok("abc", "abc"))
+        self.assertFalse(session_key_ok("abc", "xyz"))
+        self.assertFalse(session_key_ok("abc", None))
+        self.assertFalse(session_key_ok("abc", ""))
+
+    def test_legacy_row_without_key(self):
+        # 历史数据没令牌：视为不设防，避免升级后老会话全不可用
+        from app.core.auth import session_key_ok
+        self.assertTrue(session_key_ok(None, None))
+
+    def test_key_is_unguessable(self):
+        from app.core.auth import new_session_key
+        a, b = new_session_key(), new_session_key()
+        self.assertNotEqual(a, b)
+        self.assertGreaterEqual(len(a), 24)
 
 
 if __name__ == "__main__":

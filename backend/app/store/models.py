@@ -17,6 +17,9 @@ class ChatSession(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     session_id = Column(String(64), nullable=False, unique=True, index=True)
     title = Column(String(255), default="新对话")
+    # 会话能力令牌：客户端首次对话时由服务端签发，之后读写该会话必须带上。
+    # 没有它，任何知道 sessionId 的人都能读到别人的全部问诊记录。
+    session_key = Column(String(64), nullable=True, index=True)
     create_time = Column(DateTime, server_default=func.now())
     update_time = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
