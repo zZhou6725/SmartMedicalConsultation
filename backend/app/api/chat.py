@@ -19,6 +19,7 @@ from app.services.llm import chat_once, chat_stream as llm_stream
 from app.store.session_store import load_history, load_session, save_turn
 from app.services.safety import risk_rules, safety_fields
 from app.agent.graph import run_agent
+from app.observability.trace import Trace
 # Pydantic，用来定义请求体、自动做参数校验（比如 message 不能为空）
 
 
@@ -78,14 +79,22 @@ def chat(req: ChatRequest):
     start = time.time()
     sid = req.sessionId or str(uuid.uuid4())   #没传 sessionId 就生成一个
     mid = f"msg-{int(time.time() * 1000)}"
+    tr = Trace(req.message, sid)               # 链路追踪（best-effort 落库）
 
     history = load_session(sid)    #读历史
+    t_ret = time.time()
     ev = retrieve(req.message, history)     #多 Agent 编排：意图 + 证据 + 安全
+    tr.mark_retrieve(ev, int((time.time() - t_ret) * 1000))
+
     sf = safety_fields(req.message)         #确定性安全层：急症/高危约束要下发给模型
+    t_gen = time.time()
+    gen_err = ""
     try:
         reply = chat_once(history, req.message, ev["context"], risk_rules(req.message))
     except Exception as e:
+        gen_err = f"{type(e).__name__}: {e}"
         reply = f"（调用大模型失败，请检查 LLM_API_KEY 或网络）"
+    tr.mark_generate(int((time.time() - t_gen) * 1000), gen_err)
 
     # 追加并缓存（TTL 24h / 最近12轮）
     consume = int((time.time() - start) * 1000)
@@ -93,6 +102,7 @@ def chat(req: ChatRequest):
     history.append({"role": "user", "content": req.message})
     history.append({"role": "assistant", "content": reply, "consumeTime": consume, **meta})
     save_turn(sid, history, req.message, reply, consume, meta)   # Redis 热缓存 + MySQL 全量落库
+    tr.finish()
 
     return {
         "code": 1,
@@ -100,6 +110,7 @@ def chat(req: ChatRequest):
         "data": {
             "sessionId": sid,
             "messageId": mid,
+            "traceId": tr.trace_id,
             "reply": reply,
             "symptoms": ev["symptoms"],
             "department": ev["department"],
@@ -130,10 +141,12 @@ async def chat_stream_handler(req: ChatStreamRequest):
     sid = req.sessionId or str(uuid.uuid4())
     mid = f"msg-{int(time.time() * 1000)}"
     history = load_session(sid)
+    tr = Trace(req.message, sid)               # 链路追踪（best-effort 落库）
 
     def generator():
         start = time.time()
-        yield sse({"type": "meta", "sessionId": sid, "messageId": mid})
+        yield sse({"type": "meta", "sessionId": sid, "messageId": mid,
+                   "traceId": tr.trace_id})
 
         # 安全层是纯规则、微秒级，先算先发：
         # 急症警示必须第一个到达前端——等编排+工具调用+生成跑完再提示「快打 120」，
@@ -142,7 +155,12 @@ async def chat_stream_handler(req: ChatStreamRequest):
         if sf["emergency"]["hit"]:
             yield sse({"type": "emergency", **sf["emergency"]})
 
+        t_ret = time.time()
         ev = retrieve(req.message, history)   # 编排较慢，放在急症提示之后
+        tr.mark_retrieve(ev, int((time.time() - t_ret) * 1000))
+
+        t_gen = time.time()
+        gen_err = ""
         acc = []
         try:
             for piece in llm_stream(history, req.message, ev["context"],
@@ -150,7 +168,10 @@ async def chat_stream_handler(req: ChatStreamRequest):
                 acc.append(piece)  # ← 补：累积文本
                 yield sse({"type": "delta", "content": piece})
         except Exception as e:
+            gen_err = f"{type(e).__name__}: {e}"
             yield sse({"type": "error", "code": 0, "msg": f"调用大模型失败：{e}"})
+        tr.mark_generate(int((time.time() - t_gen) * 1000), gen_err)
+
         consume = int((time.time() - start) * 1000)
         answer = "".join(acc)
         meta = _assistant_meta(ev, sf)
@@ -158,8 +179,10 @@ async def chat_stream_handler(req: ChatStreamRequest):
         history.append({"role": "assistant", "content": answer,
                         "consumeTime": consume, **meta})
         save_turn(sid, history, req.message, answer, consume, meta)
+        tr.finish()
         yield sse({
             "type": "done",
+            "traceId": tr.trace_id,
             "consumeTime": consume,
             "symptoms": ev["symptoms"],
             "department": ev["department"],

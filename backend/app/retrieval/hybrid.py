@@ -28,6 +28,16 @@ LEXICAL_BOOST = 0.15
 # 同族判定阈值（字符级 Jaccard）
 FAMILY_JACCARD = 0.7
 
+# 中文医疗口语归一化：同一个概念常有「疼/痛」两种写法
+# （偏头疼 ≡ 偏头痛、神经性头疼 ≡ 神经性偏头痛），不归一化会被当成两个不同实体。
+_SYNONYM_MAP = {"疼": "痛"}
+
+
+def _norm(name: str) -> str:
+    for a, b in _SYNONYM_MAP.items():
+        name = name.replace(a, b)
+    return name
+
 
 def _is_family_dup(name: str, kept: list) -> bool:
     """判断 name 是否与已保留的某个实体属同一族（近义/包含/字符高度重合）。
@@ -35,11 +45,14 @@ def _is_family_dup(name: str, kept: list) -> bool:
     知识库扩大后，同一个概念会散成多个近义实体
     （偏头痛 / 偏头疼 / 一侧的头部疼痛 / 单侧的剧烈头痛），
     它们会把 Top-K 名额占满，导致真正要的那个排到第 5 名之后。
+    比较前先做口语归一化，否则「偏头疼」与「偏头痛」只差一个字也会漏判。
     """
+    n = _norm(name)
     for k in kept:
-        if name in k or k in name:
+        kn = _norm(k)
+        if n in kn or kn in n:
             return True
-        a, b = set(name), set(k)
+        a, b = set(n), set(kn)
         if a and b and len(a & b) / len(a | b) >= FAMILY_JACCARD:
             return True
     return False
@@ -99,6 +112,10 @@ def graph_expand(seeds: list, top_k: int = 10) -> list:
         except Exception:
             continue                      # 单个种子查失败不影响整路检索
         for t in triples:
+            # 空泛枢纽实体（药物治疗/所有人群…）在向量路已过滤，图谱路也必须过滤：
+            # 它们连着的疾病最多，但不提供任何可用信息，进证据只会稀释上下文。
+            if t["related"] in VAGUE_ENTITIES:
+                continue
             key = (t["entity"], t["relation"], t["related"])
             if key in seen:
                 continue

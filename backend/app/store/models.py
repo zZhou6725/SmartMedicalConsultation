@@ -46,3 +46,28 @@ class EvalRecord(Base):
     pass_status = Column(Integer, default=0)
     eval_score = Column(Float, default=0)
     create_time = Column(DateTime, server_default=func.now())
+
+
+class RequestTrace(Base):
+    """请求级链路追踪表（可观测性）。
+
+    企业级系统与 demo 的关键差别之一：能不能回答「这个回答为什么是这样」。
+    每次对话落一条：意图、工具调用、召回实体、各阶段耗时、是否走了降级。
+    出问题时按 trace_id 取回完整链路，而不是只看一句回复。
+    """
+    __tablename__ = "request_trace"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    trace_id = Column(String(64), nullable=False, unique=True, index=True)
+    session_id = Column(String(64), index=True)
+    question = Column(Text, nullable=False)
+    intent = Column(String(32))
+    tool_calls = Column(JSON)          # [{tool, ok, count, ms}]
+    retrieved = Column(JSON)           # 召回实体名列表
+    evidence_count = Column(Integer, default=0)
+    retrieve_ms = Column(Integer, default=0)    # 编排+检索耗时
+    generate_ms = Column(Integer, default=0)    # 大模型生成耗时
+    total_ms = Column(Integer, default=0)
+    fallback = Column(Integer, default=0)       # 1=走了降级路径
+    error = Column(String(255))
+    create_time = Column(DateTime, server_default=func.now(), index=True)

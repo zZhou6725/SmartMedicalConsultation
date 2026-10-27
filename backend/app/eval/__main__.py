@@ -19,6 +19,8 @@ def main():
     ap.add_argument("--limit", type=int, default=None, help="只跑前 N 条")
     ap.add_argument("--no-judge", action="store_true", help="关闭 LLM 裁判")
     ap.add_argument("--no-persist", action="store_true", help="不写 eval_record 表")
+    ap.add_argument("--update-baseline", action="store_true",
+                    help="把本次结果记为基线（供下次做相对基线比对）")
     ap.add_argument("--json", action="store_true", help="标准输出打印完整结果 JSON")
     args = ap.parse_args()
 
@@ -33,6 +35,7 @@ def main():
         limit=args.limit,
         use_judge=not args.no_judge,
         persist=not args.no_persist,
+        update_baseline=args.update_baseline,
         progress=progress,
     )
 
@@ -50,6 +53,18 @@ def main():
     print(f"avgLatencyMs      : {m['avgLatencyMs']}")
     print(f"gate              : {'PASSED' if g['passed'] else 'BLOCKED ' + str(g['blockers'])}")
     print(f"report            : {summary.get('reportPath')}")
+
+    bl = summary.get("baseline") or {}
+    if bl.get("available"):
+        print(f"baseline          : {bl.get('baselineTaskId')} ({bl.get('recordedAt')})")
+        for key, v in (bl.get("deltas") or {}).items():
+            flag = "REGRESSED" if v["regressed"] else "ok"
+            print(f"  {key:18} {v['baseline']} -> {v['current']} "
+                  f"({v['delta']:+}) tol={v['tolerance']} {flag}")
+    else:
+        print("baseline          : none (use --update-baseline to record)")
+    if summary.get("baselinePath"):
+        print(f"baseline saved    : {summary['baselinePath']}")
 
     if args.json:
         print(json.dumps({k: v for k, v in summary.items() if k != "items"},

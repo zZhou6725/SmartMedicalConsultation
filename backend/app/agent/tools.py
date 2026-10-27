@@ -12,6 +12,7 @@ import json
 
 from app.config import settings
 from app.retrieval import hybrid
+from app.retrieval.hybrid import VAGUE_ENTITIES
 from app.services.llm import client
 from app.store import kg_store
 
@@ -97,23 +98,27 @@ def _exec_vector_search(query: str) -> list:
 
 
 def _exec_kg_search(keyword: str, limit: int = 5) -> list:
-    """图谱关键词搜索。"""
+    """图谱关键词搜索（过滤空泛枢纽实体）。"""
     rows = kg_store.search_nodes(keyword, limit)
     return [
         {"source": "kg", "type": r["type"], "content": r["desc"] or r["name"],
          "entity": r["name"], "relation": "", "target": ""}
-        for r in rows
+        for r in rows if r["name"] not in VAGUE_ENTITIES
     ]
 
 
 def _exec_kg_expand(entity: str) -> list:
-    """图谱双向关系扩展。"""
+    """图谱双向关系扩展。
+
+    过滤空泛枢纽实体：「高血压 -> 药物治疗」「高血压 -> 所有人群」这类三元组
+    每个病都有、却零信息量，进证据只会占位并稀释上下文。
+    """
     triples = kg_store.get_triples(entity)
     return [
         {"source": "kg", "type": t["relation"],
          "content": f"{t['entity']} -> {t['related']}",
          "entity": t["entity"], "relation": t["relation"], "target": t["related"]}
-        for t in triples
+        for t in triples if t["related"] not in VAGUE_ENTITIES
     ]
 
 
