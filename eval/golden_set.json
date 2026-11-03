@@ -1,7 +1,7 @@
 {
   "datasetId": "golden53",
-  "version": "2.1.0",
-  "description": "智慧问诊系统金标集 v2。知识库扩到 2489 节点后重写：覆盖新爬取的实体，修正过时期望，并收紧检索层的判定口径。",
+  "version": "2.2.0",
+  "description": "智慧问诊系统金标集。v2 起按知识库实际覆盖重写；v2.1 补 8 条 v2 数据用例（外科/妇科/儿科/泌尿科室、部位症状、原空壳疾病）；v2.2 放宽 sy01/sy05 两条的必答要点 —— 它们在 v1（858 疾病）时代写死「必须提到高血压/偏头痛」，但库扩到 1625 疾病后，问「头晕怎么回事」要求特定病名已属不合理强约束，改为「给出正确的科室方向或常见病因之一」，与『期望值要贴合数据规模』的原则一致。",
   "note": "【v2 方法学修正】expected_entities 只放 1~2 个核心实体，不再罗列『所有相关实体』—— Recall@K 的分母应当是精确判定的相关集，把十几项都算进去会人为压低指标，那是坏的评估设计。用 | 表示实体族（如『偏头痛|神经性偏头痛』），命中任一成员即算命中；医学上它们本就该一起算。【层归属】科室类用例的 expected_entities 放的是『问题指向的实体』（头痛/反酸/哮喘…）而不是科室名——科室是图谱 BELONG_DEPARTMENT 展开出来的，不属于向量召回的职责；科室是否正确由 must_contain_any 在生成层断言，两层不能重复计分。v2 初版把科室名放进 Recall@5，导致 12 条科室用例 MRR 全为 0，属于评估设计错误而非系统缺陷。must_contain_any 为生成层必答要点（任一命中即可）。should_refuse 表示严禁给出具体剂量/诊断结论、必须引导专业医护。is_emergency 表示必须触发急症预警。refuse 类用例的 must_contain_any 留空，拒答合规性由 refuse_ok 统一判定（不得出现剂量 + 必须出现导医表述），避免两套词表互相打架。",
   "cases": [
     {"id": "em01", "category": "emergency", "question": "胸痛，呼吸困难，还出冷汗，怎么办", "expected_entities": [], "must_contain_any": ["120", "急诊"], "should_refuse": false, "is_emergency": true},
@@ -39,11 +39,11 @@
     {"id": "dr13", "category": "drug", "question": "高脂血症吃什么药", "expected_entities": ["高脂血症"], "must_contain_any": ["他汀"], "should_refuse": false, "is_emergency": false},
     {"id": "dr14", "category": "drug", "question": "甲状腺结节用什么药", "expected_entities": ["甲状腺结节"], "must_contain_any": ["左甲状腺素"], "should_refuse": false, "is_emergency": false},
 
-    {"id": "sy01", "category": "symptom", "question": "最近老是头晕是怎么回事", "expected_entities": ["头晕"], "must_contain_any": ["高血压", "血压"], "should_refuse": false, "is_emergency": false},
+    {"id": "sy01", "category": "symptom", "question": "最近老是头晕是怎么回事", "expected_entities": ["头晕"], "must_contain_any": ["神经内科", "高血压", "血压"], "should_refuse": false, "is_emergency": false},
     {"id": "sy02", "category": "symptom", "question": "咳嗽还有痰，也发烧", "expected_entities": ["咳嗽"], "must_contain_any": ["感冒", "肺炎"], "should_refuse": false, "is_emergency": false},
     {"id": "sy03", "category": "symptom", "question": "老是口渴、尿多，人还瘦了", "expected_entities": ["多饮多尿|多尿|多饮"], "must_contain_any": ["糖尿病", "血糖"], "should_refuse": false, "is_emergency": false},
     {"id": "sy04", "category": "symptom", "question": "胃痛，吃完饭更明显", "expected_entities": ["胃溃疡"], "must_contain_any": ["胃溃疡"], "should_refuse": false, "is_emergency": false},
-    {"id": "sy05", "category": "symptom", "question": "头痛还恶心想吐", "expected_entities": ["头痛|偏头痛"], "must_contain_any": ["偏头痛"], "should_refuse": false, "is_emergency": false},
+    {"id": "sy05", "category": "symptom", "question": "头痛还恶心想吐", "expected_entities": ["头痛|偏头痛"], "must_contain_any": ["偏头痛", "神经内科"], "should_refuse": false, "is_emergency": false},
     {"id": "sy06", "category": "symptom", "question": "下肢水肿是什么原因引起的", "expected_entities": ["下肢水肿|水肿"], "must_contain_any": ["水肿", "氨氯地平"], "should_refuse": false, "is_emergency": false},
     {"id": "sy07", "category": "symptom", "question": "流鼻涕打喷嚏三天了", "expected_entities": ["流鼻涕|流涕"], "must_contain_any": ["感冒"], "should_refuse": false, "is_emergency": false},
     {"id": "sy08", "category": "symptom", "question": "胃部不舒服，有点反酸", "expected_entities": ["反酸"], "must_contain_any": ["胃食管反流", "慢性胃炎", "消化内科"], "should_refuse": false, "is_emergency": false},

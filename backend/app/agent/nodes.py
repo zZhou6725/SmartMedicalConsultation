@@ -2,6 +2,8 @@
 
 节点命名统一为 xxx_agent，因为 langgraph 0.0.20 禁止节点名与 state 字段同名。
 """
+from collections import Counter
+
 from app.agent import tools
 from app.config import settings
 from app.retrieval import hybrid
@@ -126,6 +128,11 @@ _CORE_RELS = {"HAS_SYMPTOM", "HAS_CAUSE", "HAS_CHECK", "USE_DRUG",
               # 把最关键的三元组当低价值裁掉（实测 dr01/dr02 因此失败）
               "DRUG_SIDE_EFFECT", "DRUG_INTERACT", "DRUG_SUIT", "DRUG_TABOO_CROWD"}
 
+# 同一种关系在证据里最多保留几条。
+# 知识库扩容后单个症状的入边动辄 46~79 条（大量罕见病都列同一个症状），
+# 不设上限就会把科室/用药等关键信息挤出预算（实测 sy01/sy05 因此失败）。
+MAX_PER_REL = 6
+
 # 问题类型 → 该优先保留的关系（顺序即优先级：越靠前越先匹配）
 _FOCUS_RULES = [
     ("DRUG_SIDE_EFFECT", ("副作用", "不良反应", "有什么危害", "危害")),
@@ -153,9 +160,11 @@ def _select_evidence(evidence: list, message: str, limit: int | None = None) -> 
     策略：
       1. 向量 top2 必留（查询本身最相关的实体，通常是「正主」）；
       2. 与问题类型匹配的关系（问症状就留 HAS_SYMPTOM，问病因留 HAS_CAUSE…）排最前；
-      3. 其余核心关系（用药/科室/检查/禁忌）次之；
+      3. 其余核心关系次之，且**人工 curated 边与支持度高的边优先**；
       4. 最后才轮到高分但低价值的「可见于…」噪声。
-    顺序即优先级 —— 模型对上下文开头更敏感，关键证据放前面命中率更高。
+    另外做**同类去重**：同一种关系最多保留 MAX_PER_REL 条。
+    知识库扩容后单个症状的入边动辄 46~79 条（大量罕见病都列同一个症状），
+    不设上限就会把科室/用药等关键信息挤出预算（实测 sy01/sy05 因此失败）。
     """
     budget = limit if limit is not None else settings.EVIDENCE_MAX_ITEMS
     if len(evidence) <= budget:
@@ -165,17 +174,29 @@ def _select_evidence(evidence: list, message: str, limit: int | None = None) -> 
     head = [i for i, e in enumerate(evidence) if e.get("source") == "vector"][:2]
     head_set = set(head)
 
-    def priority(idx: int) -> int:
+    def priority(idx: int) -> tuple:
         e = evidence[idx]
         rel = (e.get("relation") or e.get("type") or "").upper()
-        if focus and rel == focus:
-            return 0
-        if rel in _CORE_RELS:
-            return 1
-        return 2
+        rank = 0 if (focus and rel == focus) else (1 if rel in _CORE_RELS else 2)
+        # 同一档内：人工边 > 支持度高的推导边 > 其它（负号用于降序）
+        return (rank, 0 if e.get("curated") else 1,
+                -float(e.get("support") or 0))
 
-    rest = sorted((i for i in range(len(evidence)) if i not in head_set), key=priority)
-    keep = head + rest[: max(0, budget - len(head))]
+    ordered = sorted((i for i in range(len(evidence)) if i not in head_set),
+                     key=priority)
+
+    keep, per_rel = list(head), Counter()
+    for i in keep:
+        per_rel[(evidence[i].get("relation") or evidence[i].get("type") or "").upper()] += 1
+
+    for i in ordered:
+        if len(keep) >= budget:
+            break
+        rel = (evidence[i].get("relation") or evidence[i].get("type") or "").upper()
+        if per_rel[rel] >= MAX_PER_REL and not evidence[i].get("curated"):
+            continue
+        keep.append(i)
+        per_rel[rel] += 1
     return [evidence[i] for i in keep]
 
 
