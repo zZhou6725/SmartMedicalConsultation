@@ -13,6 +13,7 @@ import json
 from app.config import settings
 from app.retrieval import hybrid
 from app.retrieval.hybrid import VAGUE_ENTITIES
+from app.retrieval.synonyms import expand_terms, normalize_query
 from app.services.llm import create_completion
 from app.store import kg_store
 
@@ -98,12 +99,32 @@ def _exec_vector_search(query: str) -> list:
 
 
 def _exec_kg_search(keyword: str, limit: int = 5) -> list:
-    """图谱关键词搜索（过滤空泛枢纽实体）。"""
-    rows = kg_store.search_nodes(keyword, limit)
+    """图谱关键词搜索（先做口语归一，并过滤空泛枢纽实体）。
+
+    归一的意义：用户说「肩膀有点痛」，图谱里叫「肩痛」。
+    CONTAINS 匹配对字面差异零容忍，不归一就是 0 命中（真实 badcase）。
+    这里把归一后的词、抽出的规范症状词、原词都试一遍。
+    """
+    terms = []
+    for t in (normalize_query(keyword), *expand_terms(keyword), keyword):
+        t = (t or "").strip()
+        if t and t not in terms:
+            terms.append(t)
+
+    rows, seen = [], set()
+    for term in terms:
+        for r in kg_store.search_nodes(term, limit):
+            if r["name"] in seen:
+                continue
+            seen.add(r["name"])
+            rows.append(r)
+        if len(rows) >= limit:
+            break
+
     return [
         {"source": "kg", "type": r["type"], "content": r["desc"] or r["name"],
          "entity": r["name"], "relation": "", "target": ""}
-        for r in rows if r["name"] not in VAGUE_ENTITIES
+        for r in rows[:limit] if r["name"] not in VAGUE_ENTITIES
     ]
 
 

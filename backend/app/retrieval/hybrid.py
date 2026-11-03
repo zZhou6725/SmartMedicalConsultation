@@ -10,6 +10,7 @@
 """
 from app.config import settings
 from app.retrieval.embeddings import encode
+from app.retrieval.synonyms import normalize_query
 from app.retrieval import vector_store as vs
 from app.store import kg_store
 
@@ -70,9 +71,13 @@ def vector_search(query: str, top_k: int = 10) -> list:
       2. 词面命中加成 —— 查询里直接出现的实体名加权；
       3. 同族去重 —— 近义实体只保留排最前的那个，避免霸占名额。
     候选先多取 3 倍，才有余量做去重。
+
+    另外先做**口语归一**：用户说「肩膀有点痛」，图谱里叫「肩痛」，
+    不归一的话向量只能沾边、关键词完全 0 命中（真实 badcase）。
     """
-    hits = vs.search(encode(query), top_k=max(top_k * 3, 15))
     q = query or ""
+    canonical = normalize_query(q)
+    hits = vs.search(encode(canonical), top_k=max(top_k * 3, 15))
 
     scored = []
     for h in hits:
@@ -80,7 +85,8 @@ def vector_search(query: str, top_k: int = 10) -> list:
         name = meta.get("entity", "")
         if not name or name in VAGUE_ENTITIES:
             continue
-        score = float(h["score"]) + (LEXICAL_BOOST if name in q else 0.0)
+        score = float(h["score"]) + (
+            LEXICAL_BOOST if (name in q or name in canonical) else 0.0)
         scored.append({
             "entity": name,
             "type": (meta.get("type", "") or "").lower(),   # Disease → disease

@@ -1,12 +1,16 @@
-"""科室名归一化：修掉「神经内科中医神经内科」这类粘连名。
+"""科室名归一化 v2：只拆「粘连名」，绝不丢弃未知科室。
 
-成因：爬虫的 _strip() 把页面里的空白全删了，于是「神经内科　中医神经内科」
-被粘成一个实体。本脚本对已有图谱做一次性修正（可重复执行）：
+背景（v1 的严重 bug）：
+  v1 的 CANON 白名单只有原来那 12 个内科科室，一旦遇到新数据里的
+  皮肤科 / 妇科 / 神经外科 / 产科 / 肿瘤内科 … 会把它们全部判为「丢弃」——
+  v2 入库后科室从 12 涨到 97，直接跑 v1 会把整套外科/妇产/儿科科室删光。
 
-  1. 用已知科室词表做前缀切分，一个粘连名拆成多个科室；
-  2. 中医X科 → X科（中医神经内科归到神经内科）；
-  3. 康复医学科/遗传咨询科/中西医结合科这类附加科直接丢弃（不参与导诊）；
-  4. 重指向 BELONG_DEPARTMENT 边，并删除不再被引用的脏科室节点。
+v2 的规则（保守，只做拆分，不删科室）：
+  1. 若某科室名以另一个已知科室名为前缀（如「神经内科中医神经内科」以「神经内科」开头）
+     → 视为粘连名，取最长前缀，剩余部分继续尝试；
+  2. 剩余部分若以「中医」开头，剥掉再试（中医X科 → X科）；
+  3. 拆不出任何已知科室 → **原样保留**（宁可留脏名，也不丢科室）；
+  4. 只有搬空后不再被引用的节点才删除。
 
 用法：
     python knowledge/crawl/normalize_departments.py --dry-run
@@ -14,7 +18,6 @@
 """
 import argparse
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -24,37 +27,35 @@ from neo4j import GraphDatabase                     # noqa: E402
 
 from app.config import settings                     # noqa: E402
 
-# 认可的规范科室（按长度倒序匹配，避免「肾内科」抢先吃掉「风湿免疫科」这类情况）
-CANON = sorted([
-    "神经内科", "心血管内科", "消化内科", "内分泌科", "血液内科",
-    "呼吸内科", "感染内科", "肾内科", "风湿免疫科", "普通内科",
-    "过敏反应科", "老年病科",
-], key=len, reverse=True)
 
-# 已知但不需要单独成节点的附加科（出现即丢弃）
-DROP_PARTS = ["康复医学科", "遗传咨询科", "中西医结合科", "脑血管病康复",
-              "中医神经内科", "中医肾病科", "中医免疫内科", "中医呼吸科",
-              "中医感染内科", "中医内分泌科", "中医血液科"]
+def build_splitter(names: set):
+    """返回 split(name) -> 拆出的科室列表（拆不出来就返回 [name]）。"""
+    ordered = sorted(names, key=len, reverse=True)   # 长名优先，避免误切
 
-
-def normalize(name: str) -> list:
-    """把一个科室名拆成规范科室列表。"""
-    out = []
-    rest = name
-    for part in DROP_PARTS:
-        rest = rest.replace(part, "|")
-    # 先按丢弃词切开，再按规范词贪心切分
-    for chunk in rest.split("|"):
-        i = 0
-        while i < len(chunk):
-            for canon in CANON:
-                if chunk.startswith(canon, i):
-                    out.append(canon)
-                    i += len(canon)
+    def split(name: str) -> list:
+        parts, rest, changed, guard = [], name, False, 0
+        while rest and guard < 6:
+            guard += 1
+            matched = None
+            for cand in ordered:
+                if cand != name and len(cand) >= 3 and rest.startswith(cand):
+                    matched = cand
                     break
-            else:
-                i += 1
-    return list(dict.fromkeys(out))
+            if matched:
+                parts.append(matched)
+                rest = rest[len(matched):]
+                changed = True
+                continue
+            if rest.startswith("中医"):          # 中医X科 → 继续尝试 X科
+                rest = rest[2:]
+                changed = True
+                continue
+            break
+        if not parts:
+            return [name]
+        return list(dict.fromkeys(parts)) if changed else [name]
+
+    return split
 
 
 def main():
@@ -67,58 +68,53 @@ def main():
 
     with driver.session() as s:
         rows = s.run(
-            "MATCH (d:Disease)-[:BELONG_DEPARTMENT]->(p:Department) "
-            "RETURN p.name AS dept, count(d) AS c ORDER BY c DESC").data()
+            "MATCH (p:Department) "
+            "RETURN p.name AS name, size([(d:Disease)-[:BELONG_DEPARTMENT]->(p) | d]) AS n "
+            "ORDER BY name").data()
+        names = {r["name"] for r in rows if r["name"]}
+        split = build_splitter(names)
 
-    plan = defaultdict(list)          # 旧名 -> 新名列表
-    for r in rows:
-        old = r["dept"] or ""
-        new = normalize(old)
-        if new != [old]:
-            plan[old] = new
+        plan = {}
+        for r in rows:
+            new = split(r["name"])
+            if new != [r["name"]]:
+                plan[r["name"]] = {"to": new, "diseases": r["n"]}
 
-    print(f"现有科室 {len(rows)} 个，需要归一化 {len(plan)} 个：")
-    for old, new in plan.items():
-        print(f"  {old:28} → {new or '（丢弃）'}")
+        total_move = sum(len(v["to"]) for v in plan.values())
+        print(f"科室总数 {len(names)}，需拆分 {len(plan)} 个，"
+              f"将产生 {total_move} 条重指向")
+        print(f"{'旧名':<24}{'拆分结果':<32}疾病数")
+        for old, v in sorted(plan.items(), key=lambda x: -x[1]["diseases"]):
+            print(f"{old:<24}{' + '.join(v['to']):<32}{v['diseases']}")
 
-    if args.dry_run:
-        print("\n--dry-run：未写入")
-        driver.close()
-        return
+        if args.dry_run:
+            print("\n--dry-run：未写入（提醒：v1 会把未在白名单里的科室全部丢弃）")
+            driver.close()
+            return
 
-    moved = 0
-    with driver.session() as s:
-        for old, news in plan.items():
-            if not news:                       # 没有可归的目标，保留原名不动
-                continue
-            for new in news:
-                s.run(
-                    """
-                    MATCH (d:Disease)-[:BELONG_DEPARTMENT]->(p:Department {name: $old})
-                    MERGE (q:Department {name: $new})
-                    MERGE (d)-[:BELONG_DEPARTMENT]->(q)
-                    """,
-                    old=old, new=new,
-                )
-            # 切断旧边（新边已建好）
-            s.run(
-                "MATCH (d:Disease)-[r:BELONG_DEPARTMENT]->(p:Department {name: $old}) DELETE r",
-                old=old,
-            )
-            moved += 1
+        moved = 0
+        with driver.session() as tx:
+            for old, v in plan.items():
+                for new in v["to"]:
+                    tx.run(
+                        """
+                        MATCH (d:Disease)-[:BELONG_DEPARTMENT]->(p:Department {name: $old})
+                        MERGE (q:Department {name: $new})
+                        MERGE (d)-[:BELONG_DEPARTMENT]->(q)
+                        """, old=old, new=new)
+                tx.run(
+                    "MATCH (d:Disease)-[r:BELONG_DEPARTMENT]->(p:Department {name: $old}) "
+                    "DELETE r", old=old)
+                moved += 1
 
-        # 删除不再被引用的脏科室节点
-        s.run("MATCH (p:Department) WHERE NOT (p)<-[:BELONG_DEPARTMENT]-() DELETE p")
-
-        counts = s.run(
-            "MATCH (d:Disease)-[:BELONG_DEPARTMENT]->(p:Department) "
-            "RETURN p.name AS dept, count(d) AS c ORDER BY c DESC").data()
+            removed = tx.run(
+                "MATCH (p:Department) WHERE NOT (p)<-[:BELONG_DEPARTMENT]-() "
+                "DETACH DELETE p RETURN count(p) AS c").single()["c"]
+            left = tx.run("MATCH (p:Department) RETURN count(p) AS c").single()["c"]
 
     driver.close()
-    print(f"\n已归一化 {moved} 个旧科室")
-    print(f"当前科室 {len(counts)} 个：")
-    for r in counts:
-        print(f"  {r['dept']:14} {r['c']}")
+    print(f"\n已处理 {moved} 个粘连科室；删除无引用科室 {removed} 个；"
+          f"当前科室 {left} 个")
 
 
 if __name__ == "__main__":
