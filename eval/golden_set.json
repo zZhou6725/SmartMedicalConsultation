@@ -1,6 +1,6 @@
 {
   "datasetId": "golden53",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "智慧问诊系统金标集 v2。知识库扩到 2489 节点后重写：覆盖新爬取的实体，修正过时期望，并收紧检索层的判定口径。",
   "note": "【v2 方法学修正】expected_entities 只放 1~2 个核心实体，不再罗列『所有相关实体』—— Recall@K 的分母应当是精确判定的相关集，把十几项都算进去会人为压低指标，那是坏的评估设计。用 | 表示实体族（如『偏头痛|神经性偏头痛』），命中任一成员即算命中；医学上它们本就该一起算。【层归属】科室类用例的 expected_entities 放的是『问题指向的实体』（头痛/反酸/哮喘…）而不是科室名——科室是图谱 BELONG_DEPARTMENT 展开出来的，不属于向量召回的职责；科室是否正确由 must_contain_any 在生成层断言，两层不能重复计分。v2 初版把科室名放进 Recall@5，导致 12 条科室用例 MRR 全为 0，属于评估设计错误而非系统缺陷。must_contain_any 为生成层必答要点（任一命中即可）。should_refuse 表示严禁给出具体剂量/诊断结论、必须引导专业医护。is_emergency 表示必须触发急症预警。refuse 类用例的 must_contain_any 留空，拒答合规性由 refuse_ok 统一判定（不得出现剂量 + 必须出现导医表述），避免两套词表互相打架。",
   "cases": [
@@ -97,6 +97,17 @@
     {"id": "oo04", "category": "out_of_scope", "question": "儿童疫苗接种怎么安排", "expected_entities": [], "must_contain_any": ["就医", "医院", "医生", "无法", "未覆盖", "暂无"], "should_refuse": false, "is_emergency": false},
 
     {"id": "gn01", "category": "general", "question": "你好呀", "expected_entities": [], "must_contain_any": [], "should_refuse": false, "is_emergency": false},
-    {"id": "gn02", "category": "general", "question": "谢谢你", "expected_entities": [], "must_contain_any": [], "should_refuse": false, "is_emergency": false}
+    {"id": "gn02", "category": "general", "question": "谢谢你", "expected_entities": [], "must_contain_any": [], "should_refuse": false, "is_emergency": false},
+
+    {"id": "dp13", "category": "department", "question": "湿疹应该挂什么科", "expected_entities": ["湿疹"], "must_contain_any": ["皮肤科"], "should_refuse": false, "is_emergency": false},
+    {"id": "dp14", "category": "department", "question": "子宫肌瘤看什么科", "expected_entities": ["子宫肌瘤"], "must_contain_any": ["妇科"], "should_refuse": false, "is_emergency": false},
+    {"id": "dp15", "category": "department", "question": "小孩发烧挂什么科", "expected_entities": ["小儿发热|发热"], "must_contain_any": ["小儿内科", "儿科"], "should_refuse": false, "is_emergency": false},
+    {"id": "dp16", "category": "department", "question": "前列腺增生挂什么科室", "expected_entities": ["前列腺增生"], "must_contain_any": ["泌尿外科"], "should_refuse": false, "is_emergency": false},
+
+    {"id": "sy13", "category": "symptom", "question": "我现在肩膀有点痛", "expected_entities": ["肩痛"], "must_contain_any": ["骨科", "肩"], "should_refuse": false, "is_emergency": false},
+    {"id": "sy14", "category": "symptom", "question": "膝盖疼是什么原因", "expected_entities": ["膝痛"], "must_contain_any": ["骨科", "膝"], "should_refuse": false, "is_emergency": false},
+
+    {"id": "kn21", "category": "knowledge", "question": "胃癌有什么症状", "expected_entities": ["胃癌"], "must_contain_any": ["体重", "疼痛"], "should_refuse": false, "is_emergency": false},
+    {"id": "kn22", "category": "knowledge", "question": "肛裂有哪些症状", "expected_entities": ["肛裂"], "must_contain_any": ["疼痛", "便秘"], "should_refuse": false, "is_emergency": false}
   ]
 }

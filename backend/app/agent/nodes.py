@@ -121,10 +121,15 @@ RELEVANCE_FLOOR = settings.RELEVANCE_FLOOR
 # 语义最关键的三元组砍掉，留下高分但低价值的「可见于…」列表，
 # 导致模型回答「知识库未列出症状」—— 而事实是图谱里明明有。
 _CORE_RELS = {"HAS_SYMPTOM", "HAS_CAUSE", "HAS_CHECK", "USE_DRUG",
-              "BELONG_DEPARTMENT", "HAS_TABOO", "FIT_CROWD"}
+              "BELONG_DEPARTMENT", "HAS_TABOO", "FIT_CROWD",
+              # 药品四条：漏了它们会让「副作用」「相互作用」这类问题
+              # 把最关键的三元组当低价值裁掉（实测 dr01/dr02 因此失败）
+              "DRUG_SIDE_EFFECT", "DRUG_INTERACT", "DRUG_SUIT", "DRUG_TABOO_CROWD"}
 
-# 问题类型 → 该优先保留的关系
+# 问题类型 → 该优先保留的关系（顺序即优先级：越靠前越先匹配）
 _FOCUS_RULES = [
+    ("DRUG_SIDE_EFFECT", ("副作用", "不良反应", "有什么危害", "危害")),
+    ("DRUG_INTERACT", ("一起吃", "同服", "一起用", "相互作用", "配伍")),
     ("HAS_CAUSE", ("原因", "引起", "导致", "为什么", "怎么会", "病因")),
     ("HAS_CHECK", ("检查", "查什么", "怎么查", "筛查", "化验")),
     ("HAS_SYMPTOM", ("症状", "表现", "感觉", "有哪些不适")),
@@ -174,7 +179,7 @@ def _select_evidence(evidence: list, message: str, limit: int | None = None) -> 
     return [evidence[i] for i in keep]
 
 
-def _derive(evidence: list):
+def _derive(evidence: list, message: str = ""):
     """从证据推症状标签与推荐科室。
 
     symptoms：类型为 symptom 且分数达标的实体名。
@@ -190,9 +195,25 @@ def _derive(evidence: list):
                 if e.get("type") == "symptom" and e.get("entity")
                 and (e.get("score") is None or e["score"] >= RELEVANCE_FLOOR)]
 
-    department = next((e.get("target", "") for e in evidence
-                       if e.get("relation") == "BELONG_DEPARTMENT"), "")
-    if not department:
+    # 只保留用户真正提到的症状：问「肩膀痛」时不该把同族召回里的
+    # 「腕痛 / 颈痛」也当成用户自述展示出去（实测噪声明显）。
+    if message and symptoms:
+        from app.retrieval.synonyms import normalize_query
+        probe = f"{message} {normalize_query(message)}"
+        named = [s for s in symptoms if s in probe]
+        if named:
+            symptoms = named
+
+    # 科室：可能有多条候选（一个症状可属多个科室），必须按「人工优先、支持度高优先」选，
+    # 不能取列表里第一个 —— 实测「头晕」拿到的是 support 仅 9、占比 25% 的神经外科，
+    # 而正确归属神经内科（人工 curated 边会优先命中）。
+    depts = [e for e in evidence
+             if e.get("relation") == "BELONG_DEPARTMENT" and e.get("target")]
+    if depts:
+        depts.sort(key=lambda e: (bool(e.get("curated")),
+                                  float(e.get("support") or 0)), reverse=True)
+        department = depts[0]["target"]
+    else:
         department = next((e.get("entity", "") for e in evidence
                            if e.get("type") == "department" and e.get("entity")
                            and (e.get("score") or 0) >= RELEVANCE_FLOOR), "")
@@ -236,7 +257,7 @@ def _medical_agent(state, branch: str):
         except Exception:
             evidence = []
 
-    symptoms, department = _derive(evidence)
+    symptoms, department = _derive(evidence, message)
 
     # 证据预算：按问题类型挑（不是保序砍），详见 _select_evidence。
     # 回传给前端的 evidence 同时受此约束，避免响应体也跟着膨胀。

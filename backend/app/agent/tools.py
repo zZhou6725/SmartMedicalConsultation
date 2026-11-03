@@ -138,7 +138,9 @@ def _exec_kg_expand(entity: str) -> list:
     return [
         {"source": "kg", "type": t["relation"],
          "content": f"{t['entity']} -> {t['related']}",
-         "entity": t["entity"], "relation": t["relation"], "target": t["related"]}
+         "entity": t["entity"], "relation": t["relation"], "target": t["related"],
+         # 透传边的元信息：_derive 要靠 support/curated 在多科室候选里选对主科室
+         "support": t.get("support"), "curated": t.get("curated")}
         for t in triples if t["related"] not in VAGUE_ENTITIES
     ]
 

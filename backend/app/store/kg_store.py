@@ -211,7 +211,8 @@ def get_triples(name: str) -> list:
         MATCH (n {name: $name})-[r]-(m)
         RETURN startNode(r).name AS entity, labels(startNode(r))[0] AS entityType,
                type(r) AS relation,
-               endNode(r).name AS related, labels(endNode(r))[0] AS relatedType
+               endNode(r).name AS related, labels(endNode(r))[0] AS relatedType,
+               r.support AS support, r.curated AS curated, r.derived AS derived
         """,
         name=_check_name(name),
     )
@@ -222,6 +223,11 @@ def get_triples(name: str) -> list:
             "relation": r["relation"],
             "related": r["related"],
             "relatedType": (r["relatedType"] or "").lower(),
+            # 推导出来的「症状→科室」可能有多条候选，靠 support 排序才能选出主科室；
+            # curated 的人工边优先于统计推导（如 头晕→神经内科 这类常识性归属）。
+            "support": r["support"],
+            "curated": bool(r["curated"]),
+            "derived": bool(r["derived"]),
         }
         for r in rows
     ]
