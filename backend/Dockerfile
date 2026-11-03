@@ -19,7 +19,18 @@ RUN apt-get update \
 
 # 先装依赖再拷代码，利用层缓存：改代码不会触发重装依赖
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# PyPI 源可切换：国内网络下 pypi.org 可能很慢。
+# 构建时传 --build-arg PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple，
+# 或直接在 .env 里加 PIP_INDEX（compose 会透传）
+ARG PIP_INDEX=https://pypi.org/simple
+
+# 关键：显式先装 **CPU 版** torch。
+# 直接 pip install sentence-transformers 会从 PyPI 拉到 CUDA 版 torch（Linux 下 2 GB+），
+# 而本项目只在 CPU 上推理 —— 白占体积和下载时间。先装 CPU 版后，
+# 后面 requirements 里的 sentence-transformers 会复用它，不再重复下载。
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -i "${PIP_INDEX}" -r /app/requirements.txt
 
 COPY backend/ /app/backend/
 # knowledge/ 里只有构建脚本；向量索引体积大且在 .gitignore 中，

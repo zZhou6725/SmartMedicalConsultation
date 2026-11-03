@@ -152,9 +152,7 @@ curl -s -o /dev/null -w "%{http_code}\n" "http://localhost:8080/api/chat/message
 
 ### 6.3 限流
 
-在 Nginx 层按 IP 限流（`frontend/nginx.conf`）：
-
-| 路径 | 限制 | 说明 |
+在 Nginx 层按 IP 限流（`frontend/nginx.conf`）：| 路径 | 限制 | 说明 |
 |---|---|---|
 `/api/chat/` | 10 次/分钟，突发 5 | 一次问诊 3~5 秒且花额度，必须卡住 |
 `/api/` | 120 次/分钟，突发 40 | 其它接口 |
@@ -162,6 +160,12 @@ curl -s -o /dev/null -w "%{http_code}\n" "http://localhost:8080/api/chat/message
 
 > 后端 8000 端口在 compose 里已绑定 `127.0.0.1`，**对外只走 Nginx** ——
 > 否则可以直接绕过限流和后端日志。
+
+**本机开发同样要注意**：`main.py` 用 `API_HOST` 决定监听地址，`.env.example` 已默认
+`127.0.0.1`（只本机可达）。如果为了手机/另一台机器访问而改成 `0.0.0.0`，就等于把
+**对话接口**敞开在局域网上（对话无需鉴权、也不经过 Nginx 限流）—— 同网段的人可以直接
+用你的服务、烧你的模型额度。那种场景请走第 2 节的全栈 compose（有 Nginx 限流）并设置
+`ADMIN_TOKEN`。
 
 ### 6.4 启用 HTTPS
 
@@ -184,6 +188,7 @@ mkdir -p frontend/certs && mv *.pem frontend/certs/
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
+| `docker compose up --build` 卡在 `Pulling fs layer` / 进度几 KB/s | 镜像仓库网络不通（本机实测过：配了加速器仍只有 1 MB/9 分钟） | 配代理或换可用镜像源；或提前 `docker pull python:3.12-slim node:20-alpine` 再构建 |
 | `backend` 一直是 `unhealthy` | `/readyz` 里某项 false | `curl localhost:8000/readyz` 看是哪一项；`docker compose logs backend` |
 | 启动即报 `vectorIndex not ready` | 索引没挂上或没构建 | 确认 `knowledge/index/medical_faiss.index` 存在；容器内路径 `/app/knowledge/index` |
 | 报模型加载失败 / 卡住 | `EMBEDDING_LOCAL_ONLY=1` 但缓存卷是空的 | 确认 compose 里该值为 `0` 首次下载；或预先往 `hf-cache` 卷灌缓存 |
