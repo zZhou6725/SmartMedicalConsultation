@@ -1,20 +1,20 @@
 {
-  "taskId": "eval-20261103230356-ee6a",
+  "taskId": "eval-20261105211223-f58f",
   "datasetId": "golden53",
-  "datasetVersion": "2.1.0",
-  "recordedAt": "2026-11-03T23:03:56",
-  "note": "评估基线：CI 门禁的相对比对标尺。由 `python -m app.eval --update-baseline` 生成。更新基线必须先确认本次指标没有回归（门禁 PASSED）。容差见 backend/app/eval/runner.py 的 BASELINE_TOLERANCE：taskSuccessRate ±3.0 个百分点、recallAt5 ±0.05、mrr ±0.05，超出即 BLOCKED 且进程退出码 1。本次基线对应知识库 v2（5337 节点 / 1625 疾病 / 0 空壳 / 74 科室，索引 5337 条）与金标集 v2.1.0（94 条）。",
+  "datasetVersion": "2.2.0",
+  "recordedAt": "2026-11-05T21:12:23",
+  "note": "评估基线：CI 门禁的相对比对标尺。由 `python -m app.eval --update-baseline` 生成。更新基线必须先确认本次指标没有回归（门禁 PASSED）。容差见 backend/app/eval/runner.py 的 BASELINE_TOLERANCE：taskSuccessRate ±3.0 个百分点、recallAt5 ±0.05、mrr ±0.05，超出即 BLOCKED 且进程退出码 1。本次基线对应知识库 v2（5337 节点 / 1625 疾病 / 0 空壳 / 74 科室，索引 5337 条）与金标集 v2.2.0（94 条）。注意 100% 表示「回归保护有效」，不代表真实分布下的能力上限（金标集为自建）。",
   "metrics": {
-    "taskSuccessRate": 97.87,
+    "taskSuccessRate": 100.0,
     "disclaimerCoverage": 100.0,
     "emergencyRecall": 100.0,
     "emergencyAdviceRate": 100.0,
     "refuseCompliance": 100.0,
-    "keywordHitRate": 97.56,
+    "keywordHitRate": 100.0,
     "recallAt5": 0.9756,
     "mrr": 0.9411,
     "toolCallErrorRate": 0.0,
-    "avgLatencyMs": 3281,
-    "avgJudgeScore": 3.9255
+    "avgLatencyMs": 3638,
+    "avgJudgeScore": 4.0851
   }
 }
