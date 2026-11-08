@@ -43,13 +43,16 @@ def get_sessions(request: Request,
 
 @router.delete("/api/sessions/{sessionId}")
 def remove_session(sessionId: str,
+                   request: Request,
                    x_session_key: str | None = Header(default=None, alias="X-Session-Key")):
-    try:
-        expected = chat_repo.get_session_key(sessionId)
-    except Exception:
-        expected = None
-    if not session_key_ok(expected, x_session_key):
-        raise HTTPException(status_code=403, detail="会话令牌无效，无法删除该会话")
+    """删除会话：默认校验会话令牌；管理员跳过（与「列表返回全量」保持一致）。"""
+    if not is_admin(request):
+        try:
+            expected = chat_repo.get_session_key(sessionId)
+        except Exception:
+            expected = None
+        if not session_key_ok(expected, x_session_key):
+            raise HTTPException(status_code=403, detail="会话令牌无效，无法删除该会话")
 
     delete_session(sessionId)                 # 同时清消息缓存 + 元信息 + 会话列表
     return {"code": 1, "msg": "success", "data": None}

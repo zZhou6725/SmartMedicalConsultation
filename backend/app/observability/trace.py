@@ -56,9 +56,10 @@ class Trace:
         ]
         # 证据里 vector 源带 entity 名，用于回放"召回了什么"
         self.retrieved = [e.get("content", "")[:40] for e in (ev.get("evidence") or [])][:10]
-        # 编排失败会退化成 general + 空证据，这属于降级
-        self.fallback = (ev.get("intent") == "general" and self.evidence_count == 0
-                         and bool(self.question))
+        # 降级 = 编排真的抛异常（retrieve 会置 degraded=True）。
+        # 不能用「intent=general 且无证据」判断 —— 闲聊（"你好"）本来就该是
+        # general 且无需证据，那样算会把降级率变成假阳性满天飞的指标。
+        self.fallback = bool(ev.get("degraded"))
 
     def mark_generate(self, elapsed_ms: int, error: str = ""):
         self.generate_ms = elapsed_ms

@@ -13,10 +13,10 @@ import uuid  #随机数
 import json
 import logging
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
-from app.core.auth import new_session_key, session_key_ok
+from app.core.auth import is_admin, new_session_key, session_key_ok
 from app.services.llm import chat_once, chat_stream as llm_stream
 from app.store import chat_repo
 from app.store.session_store import load_history, load_session, save_turn
@@ -39,12 +39,16 @@ def retrieve(message: str, history: list | None = None) -> dict:
 
     编排内部：意图识别 → 分支（五路医疗分支内含 Tool Calling）→ 安全检查汇聚。
     编排失败时返回空证据，退化为普通对话，不阻断主流程。
+
+    `degraded` 是**真实降级信号**（编排抛异常），与「闲聊本来就该走 general
+    且无需证据」区分开 —— 混在一起会让降级率这个健康指标全是假阳性。
     """
     empty = {"evidence": [], "context": "", "symptoms": [], "department": "",
-             "intent": "general", "tool_log": []}
+             "intent": "general", "tool_log": [], "degraded": True}
     try:
         state = run_agent(message, history or [])
     except Exception:
+        log.warning("编排失败，降级为普通对话", exc_info=True)
         return empty
     return {
         "evidence": state.get("evidence") or [],
@@ -53,6 +57,7 @@ def retrieve(message: str, history: list | None = None) -> dict:
         "department": state.get("department") or "",
         "intent": state.get("intent") or "general",
         "tool_log": state.get("tool_log") or [],
+        "degraded": False,
     }
 
 
@@ -236,17 +241,21 @@ async def chat_stream_handler(
 
 @router.get("/api/chat/messages")
 def get_messages(sessionId: str,
+                 request: Request,
                  x_session_key: str | None = Header(default=None, alias="X-Session-Key")):
     """会话消息列表（历史复原）：走 MySQL 全量，Redis 兜底。
 
-    必须校验会话令牌 —— 否则任何知道 sessionId 的人都能读到别人的全部问诊记录。
+    默认必须校验会话令牌 —— 否则任何知道 sessionId 的人都能读到别人的问诊记录。
+    但管理员（本机访问或持有 X-Admin-Token）跳过：会话列表本来就对管理员返回全量，
+    只放行列表却挡住消息/删除，会让「本机开发者打不开自己的历史」—— 逻辑不自洽。
     """
-    try:
-        expected = chat_repo.get_session_key(sessionId)
-    except Exception:
-        expected = None                       # 存储不可用时按历史数据不设防处理
-    if not session_key_ok(expected, x_session_key):
-        raise HTTPException(status_code=403, detail="会话令牌无效，无法读取该会话")
+    if not is_admin(request):
+        try:
+            expected = chat_repo.get_session_key(sessionId)
+        except Exception:
+            expected = None                   # 存储不可用时按历史数据不设防处理
+        if not session_key_ok(expected, x_session_key):
+            raise HTTPException(status_code=403, detail="会话令牌无效，无法读取该会话")
 
     msgs = load_history(sessionId)
     return {"code": 1, "msg": "success", "data": {"total": len(msgs), "rows": msgs}}
